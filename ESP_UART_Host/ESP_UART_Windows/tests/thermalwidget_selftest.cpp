@@ -1,4 +1,5 @@
 #include "../colormap.h"
+#include "../framegate.h"
 
 #include <QImage>
 #include <QSet>
@@ -56,6 +57,48 @@ int main()
         for (int x = 0; x < image.width(); x += 4)
             colors.insert(image.pixel(x, y));
     }
+    if (colors.size() < 16)
+        return 6;
 
-    return colors.size() >= 16 ? 0 : 6;
+    // ── FrameGate: stitched-frame (torn) detection ──────────────────────
+    {
+        // Smooth vertical gradient (+8 counts/row): must pass.
+        QVector<quint16> smooth(kWidth * kHeight);
+        for (int y = 0; y < kHeight; ++y)
+            for (int x = 0; x < kWidth; ++x)
+                smooth[y * kWidth + x] = static_cast<quint16>(30000 + y * 8);
+        if (FrameGate::looksTorn(smooth.constData(), kWidth, kHeight))
+            return 7;
+
+        // Time-skewed stitch at the 59|60 segment seam: must be caught.
+        QVector<quint16> tornMid = smooth;
+        for (int y = 60; y < kHeight; ++y)
+            for (int x = 0; x < kWidth; ++x)
+                tornMid[y * kWidth + x] = static_cast<quint16>(tornMid[y * kWidth + x] + 1200);
+        if (!FrameGate::looksTorn(tornMid.constData(), kWidth, kHeight))
+            return 8;
+
+        // Same at the 29|30 seam.
+        QVector<quint16> tornTop = smooth;
+        for (int y = 30; y < kHeight; ++y)
+            for (int x = 0; x < kWidth; ++x)
+                tornTop[y * kWidth + x] = static_cast<quint16>(tornTop[y * kWidth + x] + 900);
+        if (!FrameGate::looksTorn(tornTop.constData(), kWidth, kHeight))
+            return 9;
+
+        // Strong natural horizontal edge OFF the seams (45|46): must NOT trip.
+        QVector<quint16> edge = smooth;
+        for (int y = 46; y < kHeight; ++y)
+            for (int x = 0; x < kWidth; ++x)
+                edge[y * kWidth + x] = static_cast<quint16>(edge[y * kWidth + x] + 1500);
+        if (FrameGate::looksTorn(edge.constData(), kWidth, kHeight))
+            return 10;
+
+        // Report fields: worst seam of tornMid is the middle one (index 1).
+        const FrameGate::TearReport rep = FrameGate::analyze(tornMid.constData(), kWidth, kHeight);
+        if (!rep.torn || rep.worstBoundary != 1 || rep.worstDiff < 1000.0)
+            return 11;
+    }
+
+    return 0;
 }

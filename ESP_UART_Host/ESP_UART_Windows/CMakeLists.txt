@@ -24,6 +24,8 @@ qt_add_executable(esp_uart
     colormap.cpp
     frameparser.h
     frameparser.cpp
+    framegate.h
+    framegate.cpp
     thermalwidget.h
     thermalwidget.cpp
     resources.qrc
@@ -53,6 +55,8 @@ qt_add_executable(thermalwidget_selftest
     tests/thermalwidget_selftest.cpp
     colormap.h
     colormap.cpp
+    framegate.h
+    framegate.cpp
 )
 
 target_link_libraries(thermalwidget_selftest PRIVATE

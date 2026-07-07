@@ -1,4 +1,5 @@
 #include "thermalwidget.h"
+#include "framegate.h"
 #include <QPainter>
 #include <QFontDatabase>
 #include <QMouseEvent>
@@ -86,8 +87,19 @@ void ThermalWidget::leaveEvent(QEvent *)
 
 // ── Frame display ──────────────────────────────────────────────────────
 
-void ThermalWidget::displayFrame(const quint16 *rawData, int width, int height)
+bool ThermalWidget::displayFrame(const quint16 *rawData, int width, int height)
 {
+    // Whole-frame gate: a checksum-valid frame can still be stitched from
+    // segments captured at different times (STM32 persistent-shelf publish).
+    // The user prefers latency over visible seams, so hold the previous image
+    // instead of showing a torn one.
+    if (m_tearGateEnabled && FrameGate::looksTorn(rawData, width, height)) {
+        m_tornCount++;
+        if (++m_tornStreak <= kTearStreakForce)
+            return false;
+    }
+    m_tornStreak = 0;
+
     const int count = width * height;
 
     // Cache raw data for spot measurement
@@ -112,6 +124,7 @@ void ThermalWidget::displayFrame(const quint16 *rawData, int width, int height)
     }
 
     update();
+    return true;
 }
 
 // ── Screenshot ─────────────────────────────────────────────────────────

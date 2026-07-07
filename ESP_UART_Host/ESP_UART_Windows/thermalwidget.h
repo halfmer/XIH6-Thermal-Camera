@@ -17,8 +17,16 @@ public:
     void setColorMap(ColorMap::Preset preset);
     ColorMap::Preset colorMap() const { return m_colorMap; }
 
-    // Feed a decoded thermal frame for display
-    void displayFrame(const quint16 *rawData, int width, int height);
+    // Feed a decoded thermal frame for display. Returns false when the tear
+    // gate rejected a stitched frame — the previous image stays on screen and
+    // the caller may log/count the rejection.
+    bool displayFrame(const quint16 *rawData, int width, int height);
+
+    // Tear-gate: reject frames stitched from segments of different capture
+    // rounds (visible horizontal seams) instead of displaying them.
+    void setTearGateEnabled(bool on) { m_tearGateEnabled = on; }
+    bool tearGateEnabled() const     { return m_tearGateEnabled; }
+    int  tornFrames() const          { return m_tornCount; }
 
     // Performance stats
     double currentFps() const   { return m_fps; }
@@ -51,6 +59,14 @@ protected:
 private:
     QImage m_image;
     ColorMap::Preset m_colorMap = ColorMap::Ironbow;
+
+    // Tear gate state. After kTearStreakForce consecutive rejections the next
+    // torn frame is shown anyway, so a scene with a real hot edge sitting
+    // exactly on a segment seam can never freeze the display outright.
+    static constexpr int kTearStreakForce = 5;
+    bool m_tearGateEnabled = true;
+    int  m_tornCount  = 0;
+    int  m_tornStreak = 0;
 
     // Full-frame raw data for pixel lookup (spot measurement)
     QVector<quint16> m_rawData;

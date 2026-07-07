@@ -772,11 +772,16 @@ void MainWindow::onFrameReceived(const ThermalFrame &frame)
         host[i] = (static_cast<quint16>(src[0]) << 8) | src[1];
     }
 
-    m_thermalWidget->displayFrame(host, frame.width, frame.height);
+    const bool shown = m_thermalWidget->displayFrame(host, frame.width, frame.height);
+    if (!shown)
+        appendSerialDiag(QString("frame_torn fid=%1 torn_total=%2")
+                             .arg(frame.frameId)
+                             .arg(m_thermalWidget->tornFrames()));
 
     m_thermalStatsLabel->setText(
-        QString("帧: %1  |  错误帧: %2  |  %3×%4  |  %5 FPS")
+        QString("帧: %1  |  错误帧: %2  |  撕裂拒显: %3  |  %4×%5  |  %6 FPS")
             .arg(m_thermalFrames).arg(m_frameParser->badFrames())
+            .arg(m_thermalWidget->tornFrames())
             .arg(frame.width).arg(frame.height)
             .arg(m_thermalWidget->currentFps(), 0, 'f', 1));
     m_parseErrorLabel->hide();
