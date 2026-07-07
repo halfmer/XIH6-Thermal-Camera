@@ -1,0 +1,35 @@
+# Build output
+build/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.pro.user*
+.qmake.stash
+CMakeUserPresets.json
+
+# Compiled objects
+*.o
+*.obj
+*.moc
+*.rcc
+*.qm
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# Libraries
+*.so
+*.so.*
+*.dll
+*.dylib
+*.a
+*.lib
+
+# Executables
+*.exe
+*.app
+
+# Qt Creator
+CMakeLists.txt.user

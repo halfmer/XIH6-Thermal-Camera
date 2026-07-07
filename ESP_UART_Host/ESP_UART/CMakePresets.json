@@ -1,0 +1,33 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Auto-detect Qt (MinGW)",
+            "description": "Auto-detect Qt via environment/PATH. Requires cmake/ninja/g++ in PATH.",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_PREFIX_PATH": "E:/Qt/Qt_Creato_All/6.10.1/mingw_64"
+            }
+        },
+        {
+            "name": "linux",
+            "displayName": "Linux GCC",
+            "description": "Build with Qt on Linux",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "/home/halfmer/Qt/6.11.1/gcc_64",
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "default",
+            "configurePreset": "default"
+        },
+        {
+            "name": "linux",
+            "configurePreset": "linux"
+        }
+    ]
+}

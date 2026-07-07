@@ -1,0 +1,27 @@
+# ==== Keil MDK 构建中间产物（保留 hex/map/sct 作为每个 commit 的固件快照）====
+MDK-ARM/XIH6_V2/*
+!MDK-ARM/XIH6_V2/XIH6_V2.hex
+!MDK-ARM/XIH6_V2/XIH6_V2.map
+!MDK-ARM/XIH6_V2/XIH6_V2.sct
+MDK-ARM/*.uvguix.*
+
+# ==== 未编译的 FreeRTOS 库（uvprojx 未包含任何其源文件，README/memory 已确认为死重量）====
+MDK-ARM/FreeRTOS/
+MDK-ARM/FreeRTOSv202406.05-LTS/
+
+# ==== Qt 上位机构建/部署产物（可由源码 + windeployqt 重建）====
+ESP_UART_Host/ESP_UART_Windows/build*/
+ESP_UART_Host/ESP_UART_Windows/deploy/
+ESP_UART_Host/ESP_UART/build/
+CMakeLists.txt.user
+*.pro.user
+
+# ==== 工具/浏览器临时目录 ====
+.agent_browser_edge_profile/
+.edge_cdp_profile/
+.agents/
+.embeddedskills/
+
+# ==== 运行期日志/临时文件 ====
+serial_diag.log
+*.tmp

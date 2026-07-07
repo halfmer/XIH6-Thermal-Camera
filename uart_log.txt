@@ -1,0 +1,16 @@
+[19:35:11.455 RX] [LEP] OK c_raw=30308 c=29.93C
+[19:35:11.458 RX] [LEP] VoSPI okdiag reason=0 reads=1410 valid=1248 discard=162 invalid=0 pkt0=28 desync=8 badseg=17 spierr=0 mask=0x0F seen=1/5/1/4 segs=1/1/0/1 dup=2 bad0=17 badx=0 wait=26 exp=44 last=00 3B 08 7A seg=0x04
+[19:36:28.853 RX] [LEP] OK c_raw=30370 c=30.55C
+[19:36:28.855 RX] [LEP] VoSPI okdiag reason=0 reads=2554 valid=2265 discard=289 invalid=0 pkt0=51 desync=15 badseg=32 spierr=0 mask=0x0F seen=3/7/3/6 segs=2/1/0/1 dup=4 bad0=32 badx=0 wait=48 exp=44 last=00 3B 20 E0 seg=0x04
+[19:36:37.534 RX] [LEP] OK c_raw=30298 c=29.83C
+[19:36:37.536 RX] [LEP] VoSPI okdiag reason=0 reads=1615 valid=1422 discard=193 invalid=0 pkt0=32 desync=10 badseg=20 spierr=0 mask=0x0F seen=2/3/3/4 segs=0/0/1/1 dup=2 bad0=20 badx=0 wait=31 exp=43 last=00 3B 05 D0 seg=0x04
+[19:36:46.573 RX] [LEP] OK c_raw=30298 c=29.83C
+[19:36:46.575 RX] [LEP] VoSPI okdiag reason=0 reads=2543 valid=2252 discard=291 invalid=0 pkt0=51 desync=15 badseg=32 spierr=0 mask=0x0F seen=3/7/3/6 segs=2/1/0/1 dup=4 bad0=32 badx=0 wait=48 exp=44 last=00 3B 84 68 seg=0x04
+[19:36:55.254 RX] [LEP] OK c_raw=30630 c=33.15C
+[19:36:55.256 RX] [LEP] VoSPI okdiag reason=0 reads=1607 valid=1413 discard=194 invalid=0 pkt0=32 desync=10 badseg=20 spierr=0 mask=0x0F seen=2/3/3/4 segs=0/0/1/1 dup=2 bad0=20 badx=0 wait=31 exp=43 last=00 3B AA E6 seg=0x04
+[19:37:04.291 RX] [LEP] OK c_raw=30630 c=33.15C
+[19:37:04.294 RX] [LEP] VoSPI okdiag reason=0 reads=2545 valid=2254 discard=291 invalid=0 pkt0=51 desync=15 badseg=32 spierr=0 mask=0x0F seen=3/7/3/6 segs=2/1/0/1 dup=4 bad0=32 badx=0 wait=48 exp=44 last=00 3B 0F 27 seg=0x04
+[19:37:12.973 RX] [LEP] OK c_raw=30630 c=33.15C
+[19:37:12.975 RX] [LEP] VoSPI okdiag reason=0 reads=1592 valid=1397 discard=195 invalid=0 pkt0=32 desync=7 badseg=23 spierr=0 mask=0x0F seen=1/4/0/4 segs=1/0/0/1 dup=2 bad0=23 badx=0 wait=31 exp=43 last=00 3B 9D 53 seg=0x04
+[19:37:22.011 RX] [LEP] OK c_raw=30440 c=31.25C
+[19:37:22.014 RX] [LEP] VoSPI okdiag reason=0 reads=2542 valid=2253 discard=289 invalid=0 pkt0=51 desync=15 badseg=32 spierr=0 mask=0x0F seen=4/4/6/5 segs=0/1/2/1 dup=4 bad0=32 badx=0 wait=48 exp=44 last=00 3B 2E 4C seg=0x04

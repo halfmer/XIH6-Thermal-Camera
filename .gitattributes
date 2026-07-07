@@ -1,0 +1,19 @@
+# 二进制文件：禁止任何行尾转换
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.bmp  binary
+*.axf  binary
+*.o    binary
+*.exe  binary
+*.dll  binary
+
+# Intel HEX / map：ASCII 但字节级 MD5 是对账锚点，禁止 git 触碰行尾
+*.hex  -text
+*.map  -text
+
+# Keil 工程文件按原样保存
+*.uvprojx -text
+*.uvoptx  -text
+*.ioc     -text
