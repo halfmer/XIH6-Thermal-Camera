@@ -90,7 +90,43 @@ Step4: 8-bit 灰度帧类型(payload 38400→19200) 或压缩(tools/lepton_compr
        → 仅在协议+内容双稳定后进入
 ```
 
-## 4. 防复发红线（继承 README_11 §5，长期有效）
+## 4. Qt 上位机：撕裂帧门禁（整帧原子显示）
+
+### 4.1 需求与根因
+
+用户需求：**收到完整的 160x120 画面再完整显示，宁可延迟也不要割裂感。**
+
+分析结论：Qt 的 FrameParser 本来就是整帧 checksum 校验后才交付、ThermalWidget 也是整帧刷新——"割裂"不是 Qt 半帧刷新，而是 **STM32 persistent-shelf 发布语义**：一帧的 4 个 segment（各 30 行）可能来自不同采集轮次，checksum 完全合法但内容在 30/60/90 行边界处时间错位；画面运动时呈现横向割裂。STM32 侧改 fresh 语义曾致长期 no frame（README_8 §1），故治法放 Qt 端：**显示前做内容级撕裂检测，撕裂帧不上屏**。
+
+### 4.2 实现（commit b3f4c47, esp_uart MD5 9C0A77EC）
+
+```text
+framegate.h/cpp (新)     纯函数 FrameGate::analyze():
+                         对 3 个 segment 边界(29|30,59|60,89|90)计算平均绝对行差,
+                         与帧内非边界行差的中位数比较;
+                         判撕裂条件 = 边界差 > max(80 counts, 基线×8)
+                         (80 counts=0.8K 绝对下限防噪声误判; ×8 比率防自然渐变误判)
+thermalwidget.h/cpp      displayFrame 改 bool 返回; 撕裂→不刷新保持上一帧;
+                         连续拒 5 帧后强制放行一帧(防真实热边缘恰在边界上导致画面永久冻结);
+                         tornFrames() 计数 / setTearGateEnabled() 开关
+mainwindow.cpp           拒帧写 serial_diag.log("frame_torn fid=... torn_total=...");
+                         状态栏新增 "撕裂拒显: N"
+CMakeLists.txt           esp_uart 与 thermalwidget_selftest 加入 framegate
+tests/thermalwidget_selftest.cpp
+                         +5 用例: 平滑渐变放行 / 59|60与29|30撕裂拦截 /
+                         非边界强水平边缘(45|46)不误杀 / TearReport 字段正确
+```
+
+验证：`thermalwidget_selftest` 与 `frameparser_selftest` 均 exit=0；协议、串口、STM32 固件零改动。
+
+### 4.3 使用与判读
+
+- `build_qt_fix/esp_uart.exe`（MD5 `9C0A77EC...`）为新版；**deploy/ 同步需先关闭正在运行的 esp_uart.exe**（同 README_6 的文件锁问题）。
+- 上板观察：画面应不再出现横向割裂，代价是运动剧烈时刷新率下降（拒帧期间保持上一帧）——这正是"宁可延迟"的预期行为。
+- `serial_diag.log` 的 `frame_torn` 行数 = 被拦截的拼接帧数量；若 `torn_total` 占比很高（>50%），说明 STM32 侧 shelf 拼接严重，届时再评估固件侧 fresh-generation 发布语义（接线修复后 badseg 应已大降，成功率可能足够支撑 fresh 语义）。
+- 若某静止场景被持续误拦（理论上不应发生，有防冻结兜底），可临时 `setTearGateEnabled(false)` 对比。
+
+## 5. 防复发红线（继承 README_11 §5，长期有效）
 
 1. 栈红线：>128B 日志缓冲禁止放栈上；评估栈时按"主线程最深 + 最深中断链"计算（现 8KB 有余量）。
 2. 时序红线：UART4 DMA 启动后的热路径禁止任何阻塞打印。
