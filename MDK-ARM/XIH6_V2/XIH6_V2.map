@@ -4526,9 +4526,9 @@ Image Symbol Table
     [Anonymous Symbol]                       0x240163e0   Section        0  lepton_stream.o(.bss.stream_buf)
     Heap_Mem                                 0x2401f9f8   Data         512  startup_stm32h743xx.o(HEAP)
     HEAP                                     0x2401f9f8   Section      512  startup_stm32h743xx.o(HEAP)
-    Stack_Mem                                0x2401fbf8   Data        1024  startup_stm32h743xx.o(STACK)
-    STACK                                    0x2401fbf8   Section     1024  startup_stm32h743xx.o(STACK)
-    __initial_sp                             0x2401fff8   Data           0  startup_stm32h743xx.o(STACK)
+    Stack_Mem                                0x2401fbf8   Data        8192  startup_stm32h743xx.o(STACK)
+    STACK                                    0x2401fbf8   Section     8192  startup_stm32h743xx.o(STACK)
+    __initial_sp                             0x24021bf8   Data           0  startup_stm32h743xx.o(STACK)
 
     Global Symbols
 
@@ -5591,7 +5591,7 @@ Memory Map of the image
     **** No section assigned to this execution region ****
 
 
-    Execution Region RW_IRAM2 (Exec base: 0x24000000, Load base: 0x08013ce0, Size: 0x0001fff8, Max: 0x00080000, ABSOLUTE)
+    Execution Region RW_IRAM2 (Exec base: 0x24000000, Load base: 0x08013ce0, Size: 0x00021bf8, Max: 0x00080000, ABSOLUTE)
 
     Exec Addr    Load Addr    Size         Type   Attr      Idx    E Section Name        Object
 
@@ -5633,7 +5633,7 @@ Memory Map of the image
     0x2401f9f0        -       0x00000004   Zero   RW          940    .bss.uwTick         stm32h7xx_hal.o
     0x2401f9f4   0x08013d05   0x00000004   PAD
     0x2401f9f8        -       0x00000200   Zero   RW            2    HEAP                startup_stm32h743xx.o
-    0x2401fbf8        -       0x00000400   Zero   RW            1    STACK               startup_stm32h743xx.o
+    0x2401fbf8        -       0x00002000   Zero   RW            1    STACK               startup_stm32h743xx.o
 
 
 ==============================================================================
@@ -5658,7 +5658,7 @@ Image component sizes
        290          0          0          0        124       8212   sdmmc.o
        636         16          0          0          0       3961   sht40.o
        418          0          0          0        272       8897   spi.o
-        72         30        664          0       1536        828   startup_stm32h743xx.o
+        72         30        664          0       8704        828   startup_stm32h743xx.o
        292          0          0          8          4      15056   stm32h7xx_hal.o
       2162         14          0          0          0      28629   stm32h7xx_hal_adc.o
        184          0          0          0          0      30213   stm32h7xx_hal_adc_ex.o
@@ -5683,7 +5683,7 @@ Image component sizes
        804          0          0          0        564      12498   usart.o
 
     ----------------------------------------------------------------------
-     65692        944       9176         40     130928     588337   Object Totals
+     65692        944       9176         40     138096     588337   Object Totals
          0          0         32          0          0          0   (incl. Generated)
        674         12          3          4         49          0   (incl. Padding)
 
@@ -5773,14 +5773,14 @@ Image component sizes
 
       Code (inc. data)   RO Data    RW Data    ZI Data      Debug   
 
-     71710       1164       9410         40     131024     589513   Grand Totals
-     71710       1164       9410         40     131024     589513   ELF Image Totals
+     71710       1164       9410         40     138192     589513   Grand Totals
+     71710       1164       9410         40     138192     589513   ELF Image Totals
      71710       1164       9410         40          0          0   ROM Totals
 
 ==============================================================================
 
     Total RO  Size (Code + RO Data)                81120 (  79.22kB)
-    Total RW  Size (RW Data + ZI Data)            131064 ( 127.99kB)
+    Total RW  Size (RW Data + ZI Data)            138232 ( 134.99kB)
     Total ROM Size (Code + RO Data + RW Data)      81160 (  79.26kB)
 
 ==============================================================================
