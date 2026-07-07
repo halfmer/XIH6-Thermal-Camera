@@ -2,15 +2,27 @@
 #include "usart.h"
 #include <stdio.h>
 
+#define LEPTON_STREAM_BUF_COUNT  2U
+/* 32-byte-aligned stride so both ping-pong buffers start on a cache line;
+   HAL_UART_Transmit_DMA still sends exactly LEPTON_STREAM_FRAME_LEN bytes. */
+#define LEPTON_STREAM_BUF_STRIDE (((LEPTON_STREAM_FRAME_LEN + 31U) / 32U) * 32U)
+
 /* stream_active: 0 = UART4 idle for host commands, 1 = binary frames are sent.
    Debug logs are on USART1; UART4/CH340 stays binary-clean for the host. */
+DMA_HandleTypeDef           hdma_uart4_tx;
 static volatile uint8_t     stream_active = 0;
 static volatile uint8_t     stream_rx_byte = 0;
 static UART_HandleTypeDef  *stream_huart = NULL;
 static uint16_t             stream_frame_id = 0;
-static uint8_t              stream_buf[LEPTON_STREAM_FRAME_LEN];
+static uint8_t              stream_buf[LEPTON_STREAM_BUF_COUNT][LEPTON_STREAM_BUF_STRIDE] __attribute__((aligned(32)));
+static uint8_t              stream_build_index = 0;
+static volatile uint8_t     stream_tx_busy = 0;
+static volatile uint8_t     stream_tx_index = 0xFFU;
 static volatile uint32_t    stream_tx_ok_count = 0;
 static volatile uint32_t    stream_tx_fail_count = 0;
+static volatile uint32_t    stream_dma_cplt_count = 0;
+static volatile uint32_t    stream_dma_busy_drop_count = 0;
+static volatile uint32_t    stream_dma_error_count = 0;
 static volatile uint32_t    stream_cmd_s_count = 0;
 static volatile uint32_t    stream_cmd_p_count = 0;
 static volatile uint32_t    stream_uart_error_count = 0;
@@ -28,29 +40,75 @@ static void Lepton_Stream_UART4_GPIO_Config(void)
     HAL_GPIO_Init(GPIOA, &gi);
 }
 
+static void Lepton_Stream_UART4_DMA_Config(UART_HandleTypeDef *huart)
+{
+    __HAL_RCC_DMA1_CLK_ENABLE();
+
+    hdma_uart4_tx.Instance                 = DMA1_Stream1;
+    hdma_uart4_tx.Init.Request             = DMA_REQUEST_UART4_TX;
+    hdma_uart4_tx.Init.Direction           = DMA_MEMORY_TO_PERIPH;
+    hdma_uart4_tx.Init.PeriphInc           = DMA_PINC_DISABLE;
+    hdma_uart4_tx.Init.MemInc              = DMA_MINC_ENABLE;
+    hdma_uart4_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+    hdma_uart4_tx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
+    hdma_uart4_tx.Init.Mode                = DMA_NORMAL;
+    hdma_uart4_tx.Init.Priority            = DMA_PRIORITY_LOW;
+    hdma_uart4_tx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
+    if (HAL_DMA_Init(&hdma_uart4_tx) != HAL_OK)
+        Error_Handler();
+
+    __HAL_LINKDMA(huart, hdmatx, hdma_uart4_tx);
+
+    HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+}
+
+static void Lepton_Stream_CleanDCache(uint8_t *buf, uint32_t len)
+{
+#if (__DCACHE_PRESENT == 1U)
+    if ((SCB->CCR & SCB_CCR_DC_Msk) != 0U)
+    {
+        uint32_t start = ((uint32_t)buf) & ~31UL;
+        uint32_t end = (((uint32_t)buf) + len + 31UL) & ~31UL;
+
+        SCB_CleanDCache_by_Addr((uint32_t *)start, (int32_t)(end - start));
+    }
+#else
+    (void)buf;
+    (void)len;
+#endif
+}
+
+/* README_9 Step9A verdict: a blocking USART1 print right after starting the
+   UART4 TX DMA corrupted every 16th frame (checksum bytes read as 0x0000).
+   So this prints ONLY on a failed DMA start - never on the success path. */
 static void Lepton_Stream_DebugPrint(uint16_t fid, uint16_t sum,
                                      HAL_StatusTypeDef status)
 {
-    char msg[160];
+    char msg[220];
     int n;
-    uint32_t total = stream_tx_ok_count + stream_tx_fail_count;
 
-    if ((status == HAL_OK) && ((total & 0x0FU) != 0U))
+    if (status == HAL_OK)
         return;
 
     n = snprintf(msg, sizeof(msg),
-                 "[STRM] fid=%u len=%lu sum=%u st=%d ok=%lu fail=%lu S=%lu P=%lu uartErr=%lu\r\n",
+                 "[STRM] fid=%u len=%lu sum=%u st=%d ok=%lu fail=%lu cplt=%lu drop=%lu dmaErr=%lu busy=%u txi=%u S=%lu P=%lu uartErr=%lu\r\n",
                  (unsigned)fid,
                  (unsigned long)LEPTON_STREAM_FRAME_LEN,
                  (unsigned)sum,
                  (int)status,
                  (unsigned long)stream_tx_ok_count,
                  (unsigned long)stream_tx_fail_count,
+                 (unsigned long)stream_dma_cplt_count,
+                 (unsigned long)stream_dma_busy_drop_count,
+                 (unsigned long)stream_dma_error_count,
+                 (unsigned)stream_tx_busy,
+                 (unsigned)stream_tx_index,
                  (unsigned long)stream_cmd_s_count,
                  (unsigned long)stream_cmd_p_count,
                  (unsigned long)stream_uart_error_count);
     if (n > 0)
-        (void)HAL_UART_Transmit(&huart1, (uint8_t *)msg, (uint16_t)n, 10);
+        (void)HAL_UART_Transmit(&huart1, (uint8_t *)msg, (uint16_t)n, 30);
 }
 
 /* ---------------------------------------------------------------------------
@@ -71,6 +129,7 @@ void Lepton_Stream_Init(UART_HandleTypeDef *huart)
     if (huart->Instance == UART4)
     {
         Lepton_Stream_UART4_GPIO_Config();
+        Lepton_Stream_UART4_DMA_Config(huart);
         HAL_NVIC_SetPriority(UART4_IRQn, 5, 0);
         HAL_NVIC_EnableIRQ(UART4_IRQn);
     }
@@ -89,13 +148,14 @@ uint16_t Lepton_Stream_FrameCount(void)
 }
 
 /* ---------------------------------------------------------------------------
- * Pack lepton_raw_frame into the host frame format and push it out (blocking).
- * ~256 ms per frame at 1.5 Mbps; VoSPI frames missed meanwhile are recovered by
- * the normal resync path on the next Lepton_Capture_Frame().
+ * Pack lepton_raw_frame into the host frame format and start UART4 TX DMA.
+ * If the previous RAW16 frame is still on the wire, drop this frame instead of
+ * blocking the VoSPI acquisition loop (~256 ms per frame at 1.5 Mbps).
  * ------------------------------------------------------------------------- */
 HAL_StatusTypeDef Lepton_Stream_SendFrame(void)
 {
-    uint8_t        *p   = stream_buf;
+    uint8_t        *buf;
+    uint8_t        *p;
     const uint16_t *src = &lepton_raw_frame[0][0];
     uint32_t        i;
     uint16_t        fid = stream_frame_id;
@@ -104,6 +164,17 @@ HAL_StatusTypeDef Lepton_Stream_SendFrame(void)
 
     if (stream_huart == NULL)
         return HAL_ERROR;
+
+    if (stream_tx_busy != 0U)
+    {
+        stream_tx_fail_count++;
+        stream_dma_busy_drop_count++;
+        /* UART4 DMA is active here; do not block on USART1 diagnostics. */
+        return HAL_BUSY;
+    }
+
+    buf = stream_buf[stream_build_index];
+    p = buf;
 
     *p++ = 0xAA;
     *p++ = 0x55;
@@ -130,20 +201,32 @@ HAL_StatusTypeDef Lepton_Stream_SendFrame(void)
 
     /* Byte-wise sum over sync + header + payload, appended big-endian. */
     for (i = 0; i < (LEPTON_STREAM_HDR_LEN + LEPTON_STREAM_PAYLOAD); i++)
-        sum += stream_buf[i];
+        sum += buf[i];
     *p++ = (uint8_t)(sum >> 8);
     *p   = (uint8_t)(sum & 0xFFU);
 
-    stream_frame_id++;
+    Lepton_Stream_CleanDCache(buf, LEPTON_STREAM_FRAME_LEN);
 
-    status = HAL_UART_Transmit(stream_huart, stream_buf,
-                               (uint16_t)LEPTON_STREAM_FRAME_LEN, 400);
+    stream_tx_busy = 1U;
+    stream_tx_index = stream_build_index;
+    status = HAL_UART_Transmit_DMA(stream_huart, buf,
+                                   (uint16_t)LEPTON_STREAM_FRAME_LEN);
     if (status == HAL_OK)
+    {
+        stream_frame_id++;
+        stream_build_index ^= 1U;
         stream_tx_ok_count++;
+    }
     else
+    {
+        stream_tx_busy = 0U;
+        stream_tx_index = 0xFFU;
         stream_tx_fail_count++;
+        if (status == HAL_ERROR)
+            stream_dma_error_count++;
+        Lepton_Stream_DebugPrint(fid, sum, status);
+    }
 
-    Lepton_Stream_DebugPrint(fid, sum, status);
     return status;
 }
 
@@ -168,13 +251,30 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
 }
 
-/* Noise at 2Mbps can raise ORE/FE and kill the RX interrupt chain; re-arm it
-   so 'S'/'P' keep working no matter what hit the line. */
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if ((stream_huart != NULL) && (huart->Instance == stream_huart->Instance))
+    {
+        stream_tx_busy = 0U;
+        stream_tx_index = 0xFFU;
+        stream_dma_cplt_count++;
+    }
+}
+
+/* Noise at high baud can raise ORE/FE and kill the RX interrupt chain; re-arm
+   it so 'S'/'P' keep working no matter what hit the line. If the error also
+   aborted an in-flight TX DMA (gState back to READY), release the ping-pong. */
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
     if ((stream_huart != NULL) && (huart->Instance == stream_huart->Instance))
     {
         stream_uart_error_count++;
+        if (huart->gState == HAL_UART_STATE_READY)
+        {
+            stream_tx_busy = 0U;
+            stream_tx_index = 0xFFU;
+            stream_dma_error_count++;
+        }
         __HAL_UART_CLEAR_FLAG(huart, UART_CLEAR_OREF | UART_CLEAR_FEF |
                                      UART_CLEAR_NEF  | UART_CLEAR_PEF);
         HAL_UART_Receive_IT(stream_huart, (uint8_t *)&stream_rx_byte, 1);

@@ -58,6 +58,7 @@
 extern DMA_HandleTypeDef hdma_usart1_tx;
 extern UART_HandleTypeDef huart1;
 /* USER CODE BEGIN EV */
+extern DMA_HandleTypeDef hdma_uart4_tx;
 extern SD_HandleTypeDef hsd2;
 extern UART_HandleTypeDef huart4;
 /* USER CODE END EV */
@@ -242,6 +243,14 @@ void USART1_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+
+/**
+  * @brief This function handles DMA1 stream1 global interrupt (UART4 TX DMA).
+  */
+void DMA1_Stream1_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_uart4_tx);
+}
 
 /**
   * @brief This function handles UART4 global interrupt (host 'S'/'P' stream commands).
