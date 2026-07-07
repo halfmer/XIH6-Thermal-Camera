@@ -264,17 +264,60 @@ HEX : MDK-ARM/XIH6_V2/XIH6_V2.hex
 MD5 : F030483475E103E88FB104FB46208D21
 ```
 
-### 7.3 上板验证方法（Step A 版）
+### 7.3 Step A 上板结果（部分改善，未根治）
 
-1. 烧录 `MD5=F030483475E103E88FB104FB46208D21` 的 HEX。
-2. USART1 串口助手设为 `1500000, 8N1`。
-3. 判定：
+用户实测反馈：
 
 ```text
-LED 恢复翻转 + USART1 正常出启动日志
-    → 栈溢出坐实。保留 8KB 栈, 进入 Step B(大缓冲改 static 加固), 之后再回到全绿帧/FPS 主线。
-LED 仍不动 + 串口仍无输出
-    → 栈嫌疑排除, 进入 Step C 二分:
-      C1 只撤 USART1 DMA ring(保 1.5M 阻塞) → C2 回 115200(B09E58BF 形态, 必活)。
-观察补充: LED 若是"微亮快闪"而非全灭 → HardFault_Handler 特征, 单独报告这个现象。
+仍然全无动静，过了一会才正常运行：LED 正常翻转、串口开始有数据，
+但一直输出 no frame，远不如 README_8 时期的质量
 ```
+
+判读：
+
+- 8KB 栈把"彻底死机"救回到"能进主循环"→ 栈溢出确实是"彻底死 vs 能活"那一层的原因。
+- 但"启动长时间无动静 + no frame"仍在 → 手工恢复的 Step 9D 形态本身（USART1 DMA ring 中断链等）还有更深的问题，该形态不值得继续修。
+
+### 7.4 转折点：用户提供 `_1FPS` 金标准快照
+
+`D:\stm32_project\XIH6_V3_1FPS\` 是"开机即翻 LED + 稳定 1FPS 热成像"的完整工程快照（README 停在 README_7，即 07-07 凌晨出图成功时刻）。**这是一直缺失的"已知好版本源码"，从此可以做真正的文件级 diff，不再按 README 文字手工恢复。**
+
+对当前工程与 `_1FPS` 逐文件对比，差异（=全部回归嫌疑点）：
+
+| 文件 | _1FPS（好） | 修复前的当前版（坏） |
+|---|---|---|
+| `Core/Src/main.c` | `SD_UART_Print`=**阻塞** static；无 DMA ring；无 [STRM_DIAG]/计时诊断 | 8KB DMA ring + 中断回调 + `msg[704]` 诊断 |
+| `Core/Src/usart.c` | USART1=**115200**，PA9/10 speed=LOW，IRQ prio=0（hdma 配置存在但**无人使用**） | 1.5M + VERY_HIGH + prio 6 |
+| `Core/Src/dma.c` | Stream0 prio=0 | prio=6 |
+| `Core/Src/stm32h7xx_it.c/.h` | 无 DMA1_Stream1 handler | 有（UART4 DMA 用） |
+| `Drivers/PER/LEPTON/lepton_stream.c/.h` | UART4 **阻塞单缓冲**发送；[STRM] 每 16 帧打印 | DMA ping-pong + span<16 门禁 + 回调分发 |
+| `Drivers/PER/LEPTON/lepton.c/.h` | —— | **完全一致**（仅 1 行注释措辞差异）|
+| `XIH6_V2.ioc` | USART1 默认 115200/LOW | 1.5M/VERY_HIGH |
+| `startup_stm32h743xx.s` | Stack 0x400 | 0x2000（Step A）|
+
+关键结论：**VoSPI 采集核心（lepton.c）两边完全一致——no frame 不是采集算法回归，而是外围（USART1 DMA 中断链/时序扰动）叠加所致。**
+
+### 7.5 对齐执行：固件回到 _1FPS 形态，唯一保留 8KB 栈
+
+修改文件（全部对齐 `_1FPS`，逐字一致）：
+
+```text
+Core/Src/main.c                     整文件替换（阻塞 SD_UART_Print, 无 ring/诊断计时）
+Core/Src/usart.c                    115200 / GPIO LOW / USART1_IRQn prio 0
+Core/Src/dma.c                      DMA1_Stream0_IRQn prio 0
+Core/Src/stm32h7xx_it.c/.h          删 DMA1_Stream1_IRQHandler 与 hdma_uart4_tx extern
+Drivers/PER/LEPTON/lepton_stream.c  整文件替换（UART4 阻塞单缓冲, 每16帧 [STRM]）
+Drivers/PER/LEPTON/lepton_stream.h  删 Lepton_Stream_GetContentDiag
+Drivers/PER/LEPTON/lepton.c         注释对齐（无代码差异）
+XIH6_V2.ioc                         删 USART1 1.5M / PA9/PA10 VERY_HIGH
+MDK-ARM/startup_stm32h743xx.s       保持 0x2000（与 _1FPS 的唯一偏离, 纯保险, 零行为差异）
+```
+
+串口配置回到：
+
+```text
+USART1 调试日志：115200, 8N1, 阻塞发送
+UART4  热成像流：1500000, 8N1, RAW16, 阻塞发送（约 3.9fps 上限, 实际受采集限制 ~1fps）
+```
+
+构建与产物见 §7.6。上位机侧无需改动（协议未变），但注意 Qt 端波特率仍选 1500000（UART4），USART1 串口助手改回 **115200**。

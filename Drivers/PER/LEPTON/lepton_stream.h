@@ -42,10 +42,5 @@ void              Lepton_Stream_Init(UART_HandleTypeDef *huart);
 HAL_StatusTypeDef Lepton_Stream_SendFrame(void);
 uint8_t           Lepton_Stream_Active(void);
 uint16_t          Lepton_Stream_FrameCount(void);
-void              Lepton_Stream_GetContentDiag(uint16_t *raw_min,
-                                                uint16_t *raw_max,
-                                                uint16_t *raw_span,
-                                                uint32_t *flat_drop,
-                                                uint32_t *flat_total);
 
 #endif /* __LEPTON_STREAM_H */

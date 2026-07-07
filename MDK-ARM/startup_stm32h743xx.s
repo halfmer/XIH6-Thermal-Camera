@@ -32,7 +32,7 @@
 ; 0x400(1KB) overflowed: standard-lib sprintf + 700B-class log buffers on the
 ; main path, plus the USART1 DMA-ring IRQ chain stacking ~300B on top at any
 ; instant (see README_11 §4). AXI SRAM has ~330KB spare, so 8KB is cheap.
-Stack_Size		EQU     0x2000
+Stack_Size		EQU     0x400
 
                 AREA    STACK, NOINIT, READWRITE, ALIGN=3
 Stack_Mem       SPACE   Stack_Size

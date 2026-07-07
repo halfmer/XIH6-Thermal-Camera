@@ -34,7 +34,6 @@
 #include "oled.h"
 #include "SHT40.h"
 #include "SD_Card.h"
-#include <stdio.h>
 #include "string.h"
 #include "lepton.h"
 #include "lepton_stream.h"
@@ -49,7 +48,6 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define SD_TEST_SECTOR   0x10000UL   /* scratch LBA used by the R/W self-test */
-#define SD_UART_DMA_RING_SIZE 8192U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -69,27 +67,6 @@ char disp_buff[32]; //
 uint8_t sd_init_status = SD_NOT_PRESENT;
 uint8_t sd_present_last = 0xFF;          /* 0xFF forces a first-pass refresh */
 HAL_SD_CardInfoTypeDef sd_info;
-
-/* Thermal stream interval diagnostics. These counters are USART1-only and do
-   not change the UART4 binary frame format. */
-static uint32_t stream_diag_last_ms = 0U;
-static uint32_t stream_diag_cap_ok = 0U;
-static uint32_t stream_diag_cap_fail = 0U;
-static uint32_t stream_diag_resync = 0U;
-static uint32_t stream_diag_send_ok = 0U;
-static uint32_t stream_diag_send_fail = 0U;
-static uint32_t stream_diag_cap_ms_sum = 0U;
-static uint32_t stream_diag_cap_ms_max = 0U;
-static uint32_t stream_diag_send_ms_sum = 0U;
-static uint32_t stream_diag_send_ms_max = 0U;
-
-static uint8_t sd_uart_dma_ring[SD_UART_DMA_RING_SIZE] __attribute__((aligned(32)));
-static volatile uint16_t sd_uart_dma_head = 0U;
-static volatile uint16_t sd_uart_dma_tail = 0U;
-static volatile uint16_t sd_uart_dma_active_len = 0U;
-static volatile uint8_t  sd_uart_dma_active = 0U;
-static volatile uint32_t sd_uart_dma_drop_count = 0U;
-static volatile uint32_t sd_uart_dma_fail_count = 0U;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -97,14 +74,10 @@ void SystemClock_Config(void);
 void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
-void SD_UART_Print(const char *s);
-void SD_UART_TxCpltCallback(UART_HandleTypeDef *huart);
-void SD_UART_ErrorCallback(UART_HandleTypeDef *huart);
+static void SD_UART_Print(const char *s);
 static void SD_ReportStatus(void);
 static uint8_t SD_SelfTest(uint32_t sector);
 static void LEP_PrintVoSPIDiag(const char *tag);
-static void LEP_StreamDiag_MaybePrint(uint32_t now_ms);
-static void SD_UART_DMA_Kick(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -147,90 +120,6 @@ static void LEP_PrintVoSPIDiag(const char *tag)
             (unsigned)lepton_diag.vospi_last_seg);
     SD_UART_Print(vd);
 }
-
-static void LEP_StreamDiag_MaybePrint(uint32_t now_ms)
-{
-    uint32_t elapsed;
-    uint32_t cap_total;
-    uint32_t send_total;
-    uint32_t cap_avg;
-    uint32_t send_avg;
-    uint16_t raw_min;
-    uint16_t raw_max;
-    uint16_t raw_span;
-    uint32_t flat_drop;
-    uint32_t flat_total;
-    uint32_t uart1_drop;
-    uint32_t uart1_fail;
-    char msg[704];
-
-    if (stream_diag_last_ms == 0U)
-    {
-        stream_diag_last_ms = now_ms;
-        return;
-    }
-
-    elapsed = now_ms - stream_diag_last_ms;
-    if (elapsed < 5000U)
-        return;
-
-    cap_total = stream_diag_cap_ok + stream_diag_cap_fail;
-    send_total = stream_diag_send_ok + stream_diag_send_fail;
-    cap_avg = (cap_total > 0U) ? (stream_diag_cap_ms_sum / cap_total) : 0U;
-    send_avg = (send_total > 0U) ? (stream_diag_send_ms_sum / send_total) : 0U;
-    Lepton_Stream_GetContentDiag(&raw_min, &raw_max, &raw_span, &flat_drop, &flat_total);
-    uart1_drop = sd_uart_dma_drop_count;
-    uart1_fail = sd_uart_dma_fail_count;
-
-    snprintf(msg, sizeof(msg),
-             "[STRM_DIAG] %lums cap_ok=%lu cap_fail=%lu resync=%lu send_ok=%lu send_fail=%lu cap_avg=%lums cap_max=%lums send_avg=%lums send_max=%lums fid=%u raw=%u/%u span=%u flat=%lu/%lu uart1Drop=%lu uart1Fail=%lu reason=%u mask=0x%02X ok=%u/%u/%u/%u seen=%u/%u/%u/%u reads=%lu discard=%lu desync=%lu badseg=%lu spierr=%lu\r\n",
-             (unsigned long)elapsed,
-             (unsigned long)stream_diag_cap_ok,
-             (unsigned long)stream_diag_cap_fail,
-             (unsigned long)stream_diag_resync,
-             (unsigned long)stream_diag_send_ok,
-             (unsigned long)stream_diag_send_fail,
-             (unsigned long)cap_avg,
-             (unsigned long)stream_diag_cap_ms_max,
-             (unsigned long)send_avg,
-             (unsigned long)stream_diag_send_ms_max,
-             (unsigned)Lepton_Stream_FrameCount(),
-             (unsigned)raw_min,
-             (unsigned)raw_max,
-             (unsigned)raw_span,
-             (unsigned long)flat_drop,
-             (unsigned long)flat_total,
-             (unsigned long)uart1_drop,
-             (unsigned long)uart1_fail,
-             (unsigned)lepton_diag.vospi_fail_reason,
-             (unsigned)lepton_diag.vospi_got_mask,
-             (unsigned)lepton_diag.vospi_seg_ok[1],
-             (unsigned)lepton_diag.vospi_seg_ok[2],
-             (unsigned)lepton_diag.vospi_seg_ok[3],
-             (unsigned)lepton_diag.vospi_seg_ok[4],
-             (unsigned)lepton_diag.vospi_seg_seen[1],
-             (unsigned)lepton_diag.vospi_seg_seen[2],
-             (unsigned)lepton_diag.vospi_seg_seen[3],
-             (unsigned)lepton_diag.vospi_seg_seen[4],
-             (unsigned long)lepton_diag.vospi_reads,
-             (unsigned long)lepton_diag.vospi_discard,
-             (unsigned long)lepton_diag.vospi_desync,
-             (unsigned long)lepton_diag.vospi_bad_seg,
-             (unsigned long)lepton_diag.vospi_spi_err);
-    SD_UART_Print(msg);
-
-    stream_diag_last_ms = now_ms;
-    stream_diag_cap_ok = 0U;
-    stream_diag_cap_fail = 0U;
-    stream_diag_resync = 0U;
-    stream_diag_send_ok = 0U;
-    stream_diag_send_fail = 0U;
-    stream_diag_cap_ms_sum = 0U;
-    stream_diag_cap_ms_max = 0U;
-    stream_diag_send_ms_sum = 0U;
-    stream_diag_send_ms_max = 0U;
-}
-
 /* USER CODE END 0 */
 
 /**
@@ -290,15 +179,15 @@ int main(void)
 
   SW_I2C_Init();
   OLED_Init();
-  
-  OLED_Clear(); 
+
+  OLED_Clear();
   OLED_ShowString(0, 0, (uint8_t *)"--- SHT40 DATA ---", 12, 1);
-  
-  OLED_ShowString(0, 16, (uint8_t *)"Temp: ", 16, 1); 
+
+  OLED_ShowString(0, 16, (uint8_t *)"Temp: ", 16, 1);
   OLED_ShowString(0, 32, (uint8_t *)"Humi: ", 16, 1);
 
 
-  SD_UART_Print((const char *)s_buf);
+  HAL_UART_Transmit(&huart1, s_buf, (uint16_t)strlen((char *)s_buf), 100);
 
   /* ---- Reset-cause banner. If inserting the SD card makes THIS line re-print
      with POR/BOR/PIN set, the "freeze" is really a brownout/reset on insertion
@@ -314,11 +203,11 @@ int main(void)
               (unsigned)((rsr >> 24) & 1U),   /* SFTRSTF  */
               (unsigned)((rsr >> 26) & 1U),   /* IWDG1RSTF*/
               (unsigned)((rsr >> 30) & 1U));  /* LPWRRSTF */
-      SD_UART_Print(rb);
+      HAL_UART_Transmit(&huart1, (uint8_t *)rb, (uint16_t)strlen(rb), 100);
       __HAL_RCC_CLEAR_RESET_FLAGS();
   }
 
-  SD_UART_Print("[STREAM] UART4/CH340 1.5Mbps binary only: 'S' = start thermal stream, 'P' = stop; debug logs on USART1\r\n");
+  SD_UART_Print("[STREAM] UART4/CH340 1.5Mbps binary only: 'S' = start thermal stream, 'P' = stop; debug logs on USART1 @115200\r\n");
 
   /* ---- SD card bring-up + read/write self-test ---- */
   if (SD_IsPresent() != SD_OK)
@@ -437,40 +326,10 @@ int main(void)
     /* ---- thermal stream mode: CH340 link carries binary frames only ---- */
     if (Lepton_Stream_Active())
     {
-        uint32_t t0;
-        uint32_t dt;
-        uint8_t cap_ok;
-
-        t0 = HAL_GetTick();
-        cap_ok = Lepton_Capture_Frame();
-        dt = HAL_GetTick() - t0;
-        stream_diag_cap_ms_sum += dt;
-        if (dt > stream_diag_cap_ms_max)
-            stream_diag_cap_ms_max = dt;
-
-        if (cap_ok)
-        {
-            HAL_StatusTypeDef tx_status;
-
-            stream_diag_cap_ok++;
-            t0 = HAL_GetTick();
-            tx_status = Lepton_Stream_SendFrame();
-            dt = HAL_GetTick() - t0;
-            stream_diag_send_ms_sum += dt;
-            if (dt > stream_diag_send_ms_max)
-                stream_diag_send_ms_max = dt;
-            if (tx_status == HAL_OK)
-                stream_diag_send_ok++;
-            else
-                stream_diag_send_fail++;
-        }
+        if (Lepton_Capture_Frame())
+            Lepton_Stream_SendFrame();
         else
-        {
-            stream_diag_cap_fail++;
-            stream_diag_resync++;
             Lepton_VoSPI_Resync();
-        }
-        LEP_StreamDiag_MaybePrint(HAL_GetTick());
         LED_TURN(1);              /* 2ms heartbeat vs ~256ms per frame */
         continue;
     }
@@ -522,12 +381,12 @@ int main(void)
     }
 
     sht40_status = sht40_read_data(&temperature, &humidity);
-    
-    if (sht40_status == 0) 
-    { 
+
+    if (sht40_status == 0)
+    {
         sprintf(disp_buff, "%.2f C   ", temperature);
         OLED_ShowString(48, 16, (uint8_t *)disp_buff, 16, 1);
-        
+
         sprintf(disp_buff, "%.2f %%   ", humidity);
         OLED_ShowString(48, 32, (uint8_t *)disp_buff, 16, 1);
 
@@ -543,7 +402,7 @@ int main(void)
         }
     }
 
-    
+
   }
   /* USER CODE END 3 */
 }
@@ -636,139 +495,11 @@ void PeriphCommonClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-static uint16_t SD_UART_RingAdvance(uint16_t value, uint16_t delta)
+/* Blocking debug print on USART1 @115200. UART4/CH340 is kept binary-only for
+   the thermal stream, so text can never land inside host image frames. */
+static void SD_UART_Print(const char *s)
 {
-    uint32_t next = (uint32_t)value + (uint32_t)delta;
-
-    if (next >= SD_UART_DMA_RING_SIZE)
-        next -= SD_UART_DMA_RING_SIZE;
-    return (uint16_t)next;
-}
-
-static void SD_UART_RestoreIRQ(uint32_t primask)
-{
-    if ((primask & 1U) == 0U)
-        __enable_irq();
-}
-
-static void SD_UART_CleanDCache(uint8_t *buf, uint32_t len)
-{
-#if (__DCACHE_PRESENT == 1U)
-    if ((SCB->CCR & SCB_CCR_DC_Msk) != 0U)
-    {
-        uint32_t start = ((uint32_t)buf) & ~31UL;
-        uint32_t end = (((uint32_t)buf) + len + 31UL) & ~31UL;
-
-        SCB_CleanDCache_by_Addr((uint32_t *)start, (int32_t)(end - start));
-    }
-#else
-    (void)buf;
-    (void)len;
-#endif
-}
-
-static void SD_UART_DMA_Kick(void)
-{
-    uint32_t primask;
-    uint16_t head;
-    uint16_t tail;
-    uint16_t len;
-    HAL_StatusTypeDef status;
-
-    primask = __get_PRIMASK();
-    __disable_irq();
-    if ((sd_uart_dma_active != 0U) || (sd_uart_dma_head == sd_uart_dma_tail))
-    {
-        SD_UART_RestoreIRQ(primask);
-        return;
-    }
-
-    head = sd_uart_dma_head;
-    tail = sd_uart_dma_tail;
-    len = (head > tail) ? (uint16_t)(head - tail)
-                        : (uint16_t)(SD_UART_DMA_RING_SIZE - tail);
-    sd_uart_dma_active = 1U;
-    sd_uart_dma_active_len = len;
-    SD_UART_RestoreIRQ(primask);
-
-    SD_UART_CleanDCache(&sd_uart_dma_ring[tail], len);
-    status = HAL_UART_Transmit_DMA(&huart1, &sd_uart_dma_ring[tail], len);
-    if (status != HAL_OK)
-    {
-        primask = __get_PRIMASK();
-        __disable_irq();
-        sd_uart_dma_active = 0U;
-        sd_uart_dma_active_len = 0U;
-        sd_uart_dma_fail_count++;
-        SD_UART_RestoreIRQ(primask);
-    }
-}
-
-void SD_UART_Print(const char *s)
-{
-    uint32_t primask;
-    uint32_t len;
-    uint32_t i;
-
-    if (s == NULL)
-        return;
-
-    len = (uint32_t)strlen(s);
-    if (len == 0U)
-        return;
-
-    primask = __get_PRIMASK();
-    __disable_irq();
-    for (i = 0U; i < len; i++)
-    {
-        uint16_t next = SD_UART_RingAdvance(sd_uart_dma_head, 1U);
-
-        if (next == sd_uart_dma_tail)
-        {
-            sd_uart_dma_drop_count += (len - i);
-            break;
-        }
-        sd_uart_dma_ring[sd_uart_dma_head] = (uint8_t)s[i];
-        sd_uart_dma_head = next;
-    }
-    SD_UART_RestoreIRQ(primask);
-
-    SD_UART_DMA_Kick();
-}
-
-void SD_UART_TxCpltCallback(UART_HandleTypeDef *huart)
-{
-    uint32_t primask;
-
-    if (huart->Instance != USART1)
-        return;
-
-    primask = __get_PRIMASK();
-    __disable_irq();
-    sd_uart_dma_tail = SD_UART_RingAdvance(sd_uart_dma_tail, sd_uart_dma_active_len);
-    sd_uart_dma_active_len = 0U;
-    sd_uart_dma_active = 0U;
-    SD_UART_RestoreIRQ(primask);
-
-    SD_UART_DMA_Kick();
-}
-
-void SD_UART_ErrorCallback(UART_HandleTypeDef *huart)
-{
-    uint32_t primask;
-
-    if (huart->Instance != USART1)
-        return;
-
-    primask = __get_PRIMASK();
-    __disable_irq();
-    sd_uart_dma_tail = SD_UART_RingAdvance(sd_uart_dma_tail, sd_uart_dma_active_len);
-    sd_uart_dma_active_len = 0U;
-    sd_uart_dma_active = 0U;
-    sd_uart_dma_fail_count++;
-    SD_UART_RestoreIRQ(primask);
-
-    SD_UART_DMA_Kick();
+    HAL_UART_Transmit(&huart1, (uint8_t *)s, (uint16_t)strlen(s), 100);
 }
 
 /* Show SD status on OLED + UART (capacity in MB when OK). */

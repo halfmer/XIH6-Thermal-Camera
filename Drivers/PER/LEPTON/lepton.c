@@ -24,8 +24,9 @@ static void Lepton_I2C_BusRecover(void);
 uint16_t lepton_raw_frame[LEPTON_IMG_HEIGHT][LEPTON_IMG_WIDTH] = {0};
 uint8_t  lepton_spi_pkt[LEPTON_PACK_SIZE] = {0};
 
-/* Complete-frame staging buffer. The driver keeps a persistent segment shelf and
-   publishes when segment 4 arrives after all four segment slots have been seen. */
+/* Complete-frame staging buffer. lepton_raw_frame is only updated after a fresh
+   1->2->3->4 segment sequence is complete, so the streamer never publishes a
+   half-new/half-stale image. */
 static uint16_t lepton_assembly_frame[LEPTON_IMG_HEIGHT][LEPTON_IMG_WIDTH] = {0};
 
 /* one segment's payload (60 packets * 160 bytes), staged before commit */
