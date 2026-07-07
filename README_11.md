@@ -214,3 +214,67 @@ C2: 波特率回 115200(即回到已验证能跑的 B09E58BF 形态) → 烧录,
 2. USART1 串口助手波特率必须与固件一致(当前 1500000)
 3. 活了之后再看: [LEP] 诊断 → UART4 发 'S' → [STRM_DIAG] 的 flat 与全绿帧对应关系
 ```
+
+## 7. 执行记录
+
+### 7.1 Step 0：git 版本管理已建立（2026-07-07）
+
+此前 `.git/` 只是一个空目录（07-05 创建后从未真正 init），今天的多轮回退全靠手工按 README 恢复——本轮起结束这个状态：
+
+```text
+git init -b main
+.gitignore : 忽略 FreeRTOS 死重量(196MB)/Qt build(359MB)/Keil 中间产物(保留 hex/map/sct)
+.gitattributes: *.pdf 等标 binary; *.hex/*.map 标 -text(保住字节级 MD5 对账锚点)
+初始提交   : f216099 "Step9D 手工恢复现场 (HEX MD5 55B9AED8, 上板启动死机待修)"
+```
+
+以后每一步固件改动一个 commit，HEX/map 随源码入库，可随时精确回退到任何产物。
+
+### 7.2 Step A：栈 1KB → 8KB（待上板验证）
+
+唯一改动：
+
+```text
+MDK-ARM/startup_stm32h743xx.s
+  Stack_Size EQU 0x400  →  0x2000
+```
+
+构建（Keil 命令行，log=`MDK-ARM/build_stepA_stack_8k.log`）：
+
+```text
+"XIH6_V2\XIH6_V2.axf" - 0 Error(s), 0 Warning(s).
+Program Size: Code=85406 RO-data=9786 RW-data=40 ZI-data=185024
+Build Time Elapsed: 00:00:04
+```
+
+单变量核验（与死机版 `55B9AED8` 对比）：
+
+```text
+Code=85406           与死机版完全一致 → 代码零变化
+ZI: 177856→185024    +7168B = 恰好 7KB 栈扩量
+sd_uart_dma_ring     0x24013f20/8192   与死机版一致
+stream_buf           0x240184a0/76864  与死机版一致
+STACK                0x2402b2e8/8192   ZI 顶端, AXI SRAM 内
+```
+
+产物：
+
+```text
+HEX : MDK-ARM/XIH6_V2/XIH6_V2.hex
+MD5 : F030483475E103E88FB104FB46208D21
+```
+
+### 7.3 上板验证方法（Step A 版）
+
+1. 烧录 `MD5=F030483475E103E88FB104FB46208D21` 的 HEX。
+2. USART1 串口助手设为 `1500000, 8N1`。
+3. 判定：
+
+```text
+LED 恢复翻转 + USART1 正常出启动日志
+    → 栈溢出坐实。保留 8KB 栈, 进入 Step B(大缓冲改 static 加固), 之后再回到全绿帧/FPS 主线。
+LED 仍不动 + 串口仍无输出
+    → 栈嫌疑排除, 进入 Step C 二分:
+      C1 只撤 USART1 DMA ring(保 1.5M 阻塞) → C2 回 115200(B09E58BF 形态, 必活)。
+观察补充: LED 若是"微亮快闪"而非全灭 → HardFault_Handler 特征, 单独报告这个现象。
+```
