@@ -88,7 +88,7 @@ static void LEP_PrintVoSPIDiag(const char *tag)
 {
     char vd[448];
 
-    sprintf(vd, "[LEP] VoSPI %s reason=%u reads=%lu valid=%lu discard=%lu invalid=%lu pkt0=%lu desync=%lu badseg=%lu spierr=%lu mask=0x%02X seen=%u/%u/%u/%u segs=%u/%u/%u/%u dup=%u bad0=%u badx=%u wait=%u exp=%u last=%02X %02X %02X %02X seg=0x%02X\r\n",
+    sprintf(vd, "[LEP] VoSPI %s reason=%u reads=%lu valid=%lu discard=%lu invalid=%lu pkt0=%lu desync=%lu badseg=%lu spierr=%lu stale=%u mask=0x%02X seen=%u/%u/%u/%u segs=%u/%u/%u/%u dup=%u bad0=%u badx=%u wait=%u exp=%u last=%02X %02X %02X %02X seg=0x%02X\r\n",
             tag,
             (unsigned)lepton_diag.vospi_fail_reason,
             (unsigned long)lepton_diag.vospi_reads,
@@ -99,6 +99,7 @@ static void LEP_PrintVoSPIDiag(const char *tag)
             (unsigned long)lepton_diag.vospi_desync,
             (unsigned long)lepton_diag.vospi_bad_seg,
             (unsigned long)lepton_diag.vospi_spi_err,
+            (unsigned)lepton_diag.vospi_stale_block,
             (unsigned)lepton_diag.vospi_got_mask,
             (unsigned)lepton_diag.vospi_seg_seen[1],
             (unsigned)lepton_diag.vospi_seg_seen[2],

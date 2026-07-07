@@ -20,6 +20,15 @@ static void Lepton_I2C_BusRecover(void);
 #define LEPTON_VOSPI_FIRST_DISCARD_WAIT_MS 1U
 #define LEPTON_VOSPI_RETRY_WAIT_MS         1U
 
+/* 1 = publish only when all four shelf segments were committed in the same
+ * acquisition generation (segment-number wrap = new generation). Blocks the
+ * time-skewed stitches the persistent shelf otherwise ships whenever a segment
+ * was dropped mid-round: checksum-valid frames whose 30-row bands come from
+ * different Lepton frames. Those were invisible on a static scene but showed
+ * as hard seams on motion, and the Qt tear gate then rejected nearly every
+ * frame (2 fps -> ~0.3 fps on motion). 0 = legacy publish-on-seg4 behavior. */
+#define LEPTON_VOSPI_FRESH_PUBLISH         1U
+
 /* global image buffer + scratch packet */
 uint16_t lepton_raw_frame[LEPTON_IMG_HEIGHT][LEPTON_IMG_WIDTH] = {0};
 uint8_t  lepton_spi_pkt[LEPTON_PACK_SIZE] = {0};
@@ -32,6 +41,13 @@ static uint16_t lepton_assembly_frame[LEPTON_IMG_HEIGHT][LEPTON_IMG_WIDTH] = {0}
 /* one segment's payload (60 packets * 160 bytes), staged before commit */
 static uint8_t seg_payload[LEPTON_PKT_PER_SEG][160];
 static uint8_t vospi_cached_mask = 0U;  /* bit0..3: segments already committed to the assembly frame */
+
+/* Acquisition-generation tracking for the fresh-publish gate. The generation
+   bumps whenever the committed segment number wraps (seg <= previous commit),
+   i.e. the stream moved on to a new Lepton frame, and on every VoSPI resync. */
+static uint8_t vospi_seg_gen[LEPTON_SEG_CNT + 1U] = {0};
+static uint8_t vospi_gen = 0U;
+static uint8_t vospi_last_commit_seg = 0U;
 
 /* bring-up diagnostics (printed by main) */
 Lepton_Diag_t lepton_diag = {0};
@@ -58,6 +74,7 @@ static void Lepton_VoSPI_DiagReset(void)
     lepton_diag.vospi_seg_bad0    = 0;
     lepton_diag.vospi_seg_badx    = 0;
     lepton_diag.vospi_sync_waits  = 0;
+    lepton_diag.vospi_stale_block = 0;
     for (uint8_t i = 0; i <= LEPTON_SEG_CNT; i++)
     {
         lepton_diag.vospi_seg_seen[i] = 0;
@@ -922,6 +939,10 @@ void Lepton_VoSPI_Resync(void)
 {
     LEPTON_CS_HIGH();
     HAL_Delay(185);
+    /* The stream restarts from scratch after a resync: nothing committed
+       before it may pair with what comes after. */
+    vospi_gen++;
+    vospi_last_commit_seg = 0U;
 }
 
 static void Lepton_VoSPI_CommitSegment(uint8_t seg)
@@ -942,6 +963,13 @@ static void Lepton_VoSPI_CommitSegment(uint8_t seg)
                 (uint16_t)((seg_payload[p][i * 2U] << 8) | seg_payload[p][i * 2U + 1U]);
         }
     }
+
+    /* Segment number wrapped (or repeated) -> the stream has moved on to a
+       new Lepton frame; everything committed from here on is a new generation. */
+    if (seg <= vospi_last_commit_seg)
+        vospi_gen++;
+    vospi_seg_gen[seg] = vospi_gen;
+    vospi_last_commit_seg = seg;
 
     vospi_cached_mask |= (uint8_t)(1U << (seg - 1U));
     lepton_diag.vospi_got_mask = vospi_cached_mask;
@@ -1109,10 +1137,29 @@ uint8_t Lepton_Capture_Frame(void)
             if ((seg == LEPTON_SEG_CNT) &&
                 ((vospi_cached_mask & 0x0FU) == 0x0FU))
             {
-                memcpy(lepton_raw_frame, lepton_assembly_frame, sizeof(lepton_raw_frame));
-                lepton_diag.vospi_got_mask = 0x0FU;
-                lepton_diag.vospi_fail_reason = LEPTON_VOSPI_FAIL_NONE;
-                return 1;
+                uint8_t fresh_ok = 1U;
+#if LEPTON_VOSPI_FRESH_PUBLISH
+                /* Fresh gate: all four shelf slots must carry the SAME
+                   acquisition generation, i.e. this Lepton frame's own
+                   segments. A stale mix (a segment dropped this round, slot
+                   still holding the previous round) is NOT published — keep
+                   collecting; the next seg-1 opens a new generation. */
+                if ((vospi_seg_gen[1] != vospi_seg_gen[LEPTON_SEG_CNT]) ||
+                    (vospi_seg_gen[2] != vospi_seg_gen[LEPTON_SEG_CNT]) ||
+                    (vospi_seg_gen[3] != vospi_seg_gen[LEPTON_SEG_CNT]))
+                {
+                    fresh_ok = 0U;
+                    if (lepton_diag.vospi_stale_block < 0xFFFFU)
+                        lepton_diag.vospi_stale_block++;
+                }
+#endif
+                if (fresh_ok)
+                {
+                    memcpy(lepton_raw_frame, lepton_assembly_frame, sizeof(lepton_raw_frame));
+                    lepton_diag.vospi_got_mask = 0x0FU;
+                    lepton_diag.vospi_fail_reason = LEPTON_VOSPI_FAIL_NONE;
+                    return 1;
+                }
             }
         }
     }
