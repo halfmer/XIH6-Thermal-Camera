@@ -68,6 +68,7 @@ private slots:
     void onParseError(const QString &msg);
     void saveScreenshot();
     void onSpotTempChanged(const QString &text);
+    void sendTransportToggleCommand();
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
@@ -89,6 +90,7 @@ private:
     void appendSerialDiag(const QString &line);
     void writeSerialDiagFile();
     void logSerialChunk(const QByteArray &data);
+    void handleSerialStatusLine(const QByteArray &line);
 
     // Transport — serial (QSerialPort lives on m_serialThread; see serialworker.h)
     QThread      *m_serialThread = nullptr;
@@ -148,6 +150,7 @@ private:
     // ── Thermal page widgets ────────────────────────────
     ThermalWidget *m_thermalWidget = nullptr;
     QComboBox     *m_colorMapCombo = nullptr;
+    QPushButton   *m_switchTransportBtn = nullptr;
     QPushButton   *m_screenshotBtn = nullptr;
     QLabel        *m_spotTempLabel = nullptr;
     QLabel        *m_thermalStatsLabel = nullptr;

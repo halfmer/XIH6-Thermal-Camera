@@ -69,9 +69,10 @@ MainWindow::~MainWindow()
     if (m_tcpClient) { m_tcpClient->disconnectFromHost(); }
     m_tcpServer->close();
     if (m_serialOpen) {
-        // Synchronous: let the worker send 'P' and close before the thread dies.
+        // Synchronous: close before the thread dies; only UART video mode sends 'P'.
         QMetaObject::invokeMethod(m_serialWorker, "closePort",
-                                  Qt::BlockingQueuedConnection, Q_ARG(bool, true));
+                                  Qt::BlockingQueuedConnection,
+                                  Q_ARG(bool, m_modeCombo && m_modeCombo->currentIndex() == 1));
     }
     m_serialThread->quit();
     m_serialThread->wait(2000);
@@ -291,6 +292,9 @@ void MainWindow::setupThermalPage(QWidget *page)
     m_thermalStatsLabel = new QLabel("等待数据...", page);
     toolbar->addWidget(m_thermalStatsLabel);
     toolbar->addStretch();
+    m_switchTransportBtn = new QPushButton("切换传输模式", page);
+    m_switchTransportBtn->setToolTip("通过控制串口发送 MODE_TOGGLE 给 STM32");
+    toolbar->addWidget(m_switchTransportBtn);
     m_screenshotBtn = new QPushButton("截图 (Ctrl+S)", page);
     toolbar->addWidget(m_screenshotBtn);
     m_clearThermalBtn = new QPushButton("清空显示", page);
@@ -344,6 +348,8 @@ void MainWindow::connectSignals()
     connect(m_frameParser, &FrameParser::parseError, this, &MainWindow::onParseError);
     connect(m_frameParser, &FrameParser::diagnostic, this,
             [this](const QString &msg) { appendSerialDiag("parser " + msg); });
+    connect(m_switchTransportBtn, &QPushButton::clicked,
+            this, &MainWindow::sendTransportToggleCommand);
     connect(m_screenshotBtn, &QPushButton::clicked, this, &MainWindow::saveScreenshot);
     connect(m_thermalWidget, &ThermalWidget::spotTemperatureChanged,
             this, &MainWindow::onSpotTempChanged);
@@ -380,7 +386,10 @@ void MainWindow::switchMode(int index)
     m_frameParser->reset();
     m_debugBuf.clear();
     m_debugFlushTimer->stop();
-    setSerialThermalStream(index == 1);
+    if (index == 1)
+        setSerialThermalStream(true);
+    else if (index == 0)
+        setSerialThermalStream(false);
 
     if (index == 0) {
         // Serial debug mode
@@ -408,7 +417,7 @@ void MainWindow::switchMode(int index)
     } else {
         // WiFi thermal mode
         m_modeStack->setCurrentIndex(1);
-        m_serialSettingsGroup->hide();
+        m_serialSettingsGroup->show();
         m_networkSettingsGroup->show();
         m_thermalFrames = 0;
         m_thermalBadFrames = 0;
@@ -513,7 +522,10 @@ void MainWindow::onSerialOpened(bool ok, const QString &error)
     m_thermalFrames = 0;
     m_thermalBadFrames = 0;
     m_thermalStatsLabel->setText("等待数据...");
-    setSerialThermalStream(m_modeCombo->currentIndex() == 1);
+    if (m_modeCombo->currentIndex() == 1)
+        setSerialThermalStream(true);
+    else if (m_modeCombo->currentIndex() == 0)
+        setSerialThermalStream(false);
 
     updateSerialStatus(true);
 }
@@ -543,7 +555,8 @@ void MainWindow::closeSerialPort()
         m_debugBuf.clear();
     }
 
-    QMetaObject::invokeMethod(m_serialWorker, "closePort", Q_ARG(bool, true));
+    QMetaObject::invokeMethod(m_serialWorker, "closePort",
+                              Q_ARG(bool, m_modeCombo->currentIndex() == 1));
 }
 
 void MainWindow::onSerialClosed()
@@ -563,7 +576,7 @@ void MainWindow::onSerialBytes(const QByteArray &data)
     updateByteCounter();
     logSerialChunk(data);
 
-    if (m_modeCombo->currentIndex() >= 1) {
+    if (m_modeCombo->currentIndex() == 1) {
         feedThermalData(data);
     } else if (m_hexDisplayCheck->isChecked()) {
         m_debugBuf.append(data);
@@ -578,6 +591,7 @@ void MainWindow::onSerialBytes(const QByteArray &data)
                 if (end > start && m_debugBuf.at(end - 1) == '\r') end--;
                 QByteArray line = m_debugBuf.mid(start, end - start);
                 start = i + 1;
+                handleSerialStatusLine(line);
                 m_receiveEdit->append(QString("<font color='#06c'>[%1 RX] %2</font>")
                     .arg(QDateTime::currentDateTime().toString("HH:mm:ss.zzz"),
                          QString::fromUtf8(line)));
@@ -742,6 +756,20 @@ void MainWindow::setSerialThermalStream(bool enabled)
     QMetaObject::invokeMethod(m_serialWorker, "setStream", Q_ARG(bool, enabled));
 }
 
+void MainWindow::sendTransportToggleCommand()
+{
+    if (!m_serialOpen) {
+        QMessageBox::warning(this, "提示", "请先打开 STM32 控制串口。");
+        return;
+    }
+
+    const QByteArray cmd("MODE_TOGGLE\n");
+    appendSerialDiag("transport_toggle_cmd MODE_TOGGLE");
+    QMetaObject::invokeMethod(m_serialWorker, "writeBytes", Q_ARG(QByteArray, cmd));
+    m_statusLabel->setText("已发送传输模式切换命令，等待 STM32 状态返回");
+    m_statusLabel->setStyleSheet("color: #f0ad4e; font-weight: bold;");
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Thermal frame handlers
 // ═══════════════════════════════════════════════════════════════════════
@@ -895,7 +923,28 @@ void MainWindow::logSerialChunk(const QByteArray &data)
                          .arg(m_rxBytes)
                          .arg(syncCount)
                          .arg(QString::fromLatin1(data.left(24).toHex(' ')))
-                         .arg(QString::fromLatin1(data.right(16).toHex(' '))));
+                          .arg(QString::fromLatin1(data.right(16).toHex(' '))));
+}
+
+void MainWindow::handleSerialStatusLine(const QByteArray &line)
+{
+    const QString text = QString::fromUtf8(line).trimmed();
+    if (text.isEmpty())
+        return;
+
+    if (text.contains("change over", Qt::CaseInsensitive)) {
+        appendSerialDiag("stm32_status change over");
+        m_statusLabel->setText("STM32 已完成传输模式切换");
+        m_statusLabel->setStyleSheet("color: #5bc0de; font-weight: bold;");
+    } else if (text.compare("ok", Qt::CaseInsensitive) == 0) {
+        appendSerialDiag("stm32_status ok");
+        m_statusLabel->setText("视频流传输成功");
+        m_statusLabel->setStyleSheet("color: #5cb85c; font-weight: bold;");
+    } else if (text.startsWith("error:", Qt::CaseInsensitive)) {
+        appendSerialDiag("stm32_status " + text);
+        m_statusLabel->setText("STM32 " + text);
+        m_statusLabel->setStyleSheet("color: #d9534f; font-weight: bold;");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════

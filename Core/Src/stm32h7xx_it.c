@@ -59,6 +59,8 @@ extern DMA_HandleTypeDef hdma_usart1_tx;
 extern UART_HandleTypeDef huart1;
 /* USER CODE BEGIN EV */
 extern DMA_HandleTypeDef hdma_uart4_tx;
+extern DMA_HandleTypeDef hdma_spi5_tx;
+extern SPI_HandleTypeDef hspi5;
 extern SD_HandleTypeDef hsd2;
 extern UART_HandleTypeDef huart4;
 /* USER CODE END EV */
@@ -258,6 +260,22 @@ void DMA1_Stream1_IRQHandler(void)
 void UART4_IRQHandler(void)
 {
   HAL_UART_IRQHandler(&huart4);
+}
+
+/**
+  * @brief This function handles DMA1 stream2 global interrupt (SPI5 TX DMA, ESP32 link).
+  */
+void DMA1_Stream2_IRQHandler(void)
+{
+  HAL_DMA_IRQHandler(&hdma_spi5_tx);
+}
+
+/**
+  * @brief This function handles SPI5 global interrupt (slave TX EOT, ESP32 link).
+  */
+void SPI5_IRQHandler(void)
+{
+  HAL_SPI_IRQHandler(&hspi5);
 }
 
 /**

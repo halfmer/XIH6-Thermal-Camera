@@ -209,6 +209,9 @@ void MainWindow::setupThermalPage(QWidget *page)
     m_thermalStatsLabel = new QLabel("等待数据...", page);
     toolbar->addWidget(m_thermalStatsLabel);
     toolbar->addStretch();
+    m_switchTransportBtn = new QPushButton("切换传输模式", page);
+    m_switchTransportBtn->setToolTip("发送 MODE_TOGGLE 给 STM32");
+    toolbar->addWidget(m_switchTransportBtn);
     m_clearThermalBtn = new QPushButton("清空显示", page);
     toolbar->addWidget(m_clearThermalBtn);
     layout->addLayout(toolbar);
@@ -252,6 +255,8 @@ void MainWindow::connectSignals()
             [this](int idx) { m_thermalWidget->setColorMap(static_cast<ColorMap::Preset>(idx)); });
     connect(m_frameParser, &FrameParser::frameReady, this, &MainWindow::onFrameReceived);
     connect(m_frameParser, &FrameParser::parseError, this, &MainWindow::onParseError);
+    connect(m_switchTransportBtn, &QPushButton::clicked,
+            this, &MainWindow::sendTransportToggleCommand);
     connect(m_clearThermalBtn, &QPushButton::clicked, this, [this]() {
         m_thermalWidget->update();
         m_thermalFrames = 0;
@@ -265,11 +270,12 @@ void MainWindow::populateBaudRates()
 {
     const QList<qint32> rates = {
         9600, 14400, 19200, 38400, 56000, 57600,
-        115200, 128000, 230400, 256000, 460800, 921600
+        115200, 128000, 230400, 256000, 460800, 921600,
+        1000000, 1500000, 2000000, 3000000
     };
     for (qint32 r : rates)
         m_baudRateCombo->addItem(QString::number(r), r);
-    m_baudRateCombo->setCurrentText("921600");  // high baud for thermal
+    m_baudRateCombo->setCurrentText("1500000");
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -385,6 +391,13 @@ void MainWindow::readData()
         updateByteCounter();
 
         QDateTime now = QDateTime::currentDateTime();
+        const QList<QByteArray> lines = data.split('\n');
+        for (QByteArray line : lines) {
+            if (line.endsWith('\r'))
+                line.chop(1);
+            handleSerialStatusLine(line);
+        }
+
         QString display = m_hexDisplayCheck->isChecked()
                               ? data.toHex(' ').toUpper()
                               : QString::fromUtf8(data);
@@ -394,6 +407,26 @@ void MainWindow::readData()
         if (m_autoScrollCheck->isChecked())
             m_receiveEdit->moveCursor(QTextCursor::End);
     }
+}
+
+void MainWindow::sendTransportToggleCommand()
+{
+    if (!m_serialPort->isOpen()) {
+        QMessageBox::warning(this, "提示", "请先打开 STM32 控制串口。");
+        return;
+    }
+
+    const QByteArray cmd("MODE_TOGGLE\n");
+    const qint64 written = m_serialPort->write(cmd);
+    if (written < 0) {
+        QMessageBox::critical(this, "错误", "发送失败: " + m_serialPort->errorString());
+        return;
+    }
+
+    m_txBytes += written;
+    updateByteCounter();
+    m_statusLabel->setText("已发送传输模式切换命令，等待 STM32 返回");
+    m_statusLabel->setStyleSheet("color: #f0ad4e; font-weight: bold;");
 }
 
 // ── Thermal frame handler ─────────────────────────────────────────────
@@ -575,6 +608,24 @@ QByteArray MainWindow::parseEscapes(const QString &text)
 void MainWindow::updateByteCounter()
 {
     m_byteCounterLabel->setText(QString("TX: %1  |  RX: %2").arg(m_txBytes).arg(m_rxBytes));
+}
+
+void MainWindow::handleSerialStatusLine(const QByteArray &line)
+{
+    const QString text = QString::fromUtf8(line).trimmed();
+    if (text.isEmpty())
+        return;
+
+    if (text.contains("change over", Qt::CaseInsensitive)) {
+        m_statusLabel->setText("STM32 已完成传输模式切换");
+        m_statusLabel->setStyleSheet("color: #5bc0de; font-weight: bold;");
+    } else if (text.compare("ok", Qt::CaseInsensitive) == 0) {
+        m_statusLabel->setText("视频流传输成功");
+        m_statusLabel->setStyleSheet("color: #5cb85c; font-weight: bold;");
+    } else if (text.startsWith("error:", Qt::CaseInsensitive)) {
+        m_statusLabel->setText("STM32 " + text);
+        m_statusLabel->setStyleSheet("color: #d9534f; font-weight: bold;");
+    }
 }
 
 void MainWindow::updatePortStatus(bool opened)

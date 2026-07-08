@@ -50,6 +50,7 @@ private slots:
     void switchMode(int index);
     void onFrameReceived(const ThermalFrame &frame);
     void onParseError(const QString &msg);
+    void sendTransportToggleCommand();
 
 private:
     void setupUi();
@@ -60,6 +61,7 @@ private:
     void updatePortStatus(bool opened);
     QByteArray parseEscapes(const QString &text);
     void updateByteCounter();
+    void handleSerialStatusLine(const QByteArray &line);
 
     // Serial port
     QSerialPort *m_serialPort = nullptr;
@@ -102,6 +104,7 @@ private:
     QComboBox     *m_colorMapCombo = nullptr;
     QLabel        *m_thermalStatsLabel = nullptr;
     QLabel        *m_parseErrorLabel = nullptr;
+    QPushButton   *m_switchTransportBtn = nullptr;
     QPushButton   *m_clearThermalBtn = nullptr;
     qint64         m_thermalFrames = 0;
     qint64         m_thermalBadFrames = 0;

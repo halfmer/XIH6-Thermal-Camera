@@ -37,12 +37,19 @@
 #include "string.h"
 #include "lepton.h"
 #include "lepton_stream.h"
+#include "fire_guard.h"
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+/* Background time-wheel entry: period-gated cooperative task. The video
+   path deliberately stays OUT of the wheel (README_14 §3). */
+typedef struct {
+    uint32_t period_ms;
+    uint32_t last;
+    void   (*fn)(void);
+} App_WheelTask_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -78,6 +85,10 @@ static void SD_UART_Print(const char *s);
 static void SD_ReportStatus(void);
 static uint8_t SD_SelfTest(uint32_t sector);
 static void LEP_PrintVoSPIDiag(const char *tag);
+static void App_Task_Fire(void);
+static void App_Task_Oled(void);
+static void App_Task_Sht40(void);
+static void App_Task_SdCd(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -182,10 +193,12 @@ int main(void)
   OLED_Init();
 
   OLED_Clear();
-  OLED_ShowString(0, 0, (uint8_t *)"--- SHT40 DATA ---", 12, 1);
+  OLED_ShowString(0, 0, (uint8_t *)"G:----- A:-----   ", 12, 1);
 
   OLED_ShowString(0, 16, (uint8_t *)"Temp: ", 16, 1);
   OLED_ShowString(0, 32, (uint8_t *)"Humi: ", 16, 1);
+
+  FireGuard_Init();
 
 
   HAL_UART_Transmit(&huart1, s_buf, (uint16_t)strlen((char *)s_buf), 100);
@@ -324,7 +337,21 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    /* ---- thermal stream mode: CH340 link carries binary frames only ---- */
+    /* --------------------------------------------------------------------
+     * Cooperative super-loop ("pseudo-concurrent", no RTOS):
+     *   - the LEPTON video pipeline runs every iteration (stream mode) or
+     *     on its idle test cadence;
+     *   - every other peripheral gets a tick-gated SLICE that runs in BOTH
+     *     modes. Each slice is short (µs..10ms) and touches only its own
+     *     peripheral, so nothing can starve or corrupt the video path.
+     *   Red line: no USART1 prints from slices while a TX DMA may be in
+     *   flight (README_9 Step9A) - slices below only use OLED (SW_I2C),
+     *   ADC1/2 and GPIO, none of which are shared with the stream.
+     * ------------------------------------------------------------------ */
+
+    Lepton_Stream_Poll();
+
+    /* ---- slice 0: LEPTON video (the priority customer) ---- */
     if (Lepton_Stream_Active())
     {
         if (Lepton_Capture_Frame())
@@ -332,77 +359,54 @@ int main(void)
         else
             Lepton_VoSPI_Resync();
         LED_TURN(1);              /* 2ms heartbeat vs ~256ms per frame */
-        continue;
     }
-
-    LED_TURN(250);
-
-    /* SD hot-plug edge detection (PG10 / SD_CD) */
+    else
     {
-        uint8_t present_now = (SD_IsPresent() == SD_OK) ? 1 : 0;
-        if (present_now != sd_present_last)
+        LED_TURN(250);
+        test_count++;
+
+        /* idle-mode Lepton health check every ~16 loops (~8s) */
+        if ((test_count % 16U) == 0U)
         {
-            sd_present_last = present_now;
-            if (present_now)
+            if (Lepton_Capture_Frame())
             {
-                SD_UART_Print("[SD] insert detected -> init...\r\n");
-                sd_init_status = SD_Card_Init();
-                SD_UART_Print("[SD] init call returned\r\n");
-                SD_ReportStatus();
-                SD_UART_Print("[SD] card inserted\r\n");
+                char lp[48];
+                uint16_t craw = lepton_raw_frame[60][80];   /* centre pixel */
+                float    ctmp = Lepton_Raw_To_Temp(craw);
+                sprintf(lp, "[LEP] OK c_raw=%u c=%.2fC\r\n", (unsigned)craw, ctmp);
+                SD_UART_Print(lp);
+                LEP_PrintVoSPIDiag("okdiag");
             }
             else
             {
-                sd_init_status = SD_NOT_PRESENT;
-                OLED_ShowString(32, 48, (uint8_t *)"No Card ", 16, 1);
-                SD_UART_Print("[SD] card removed\r\n");
+                SD_UART_Print("[LEP] no frame (check MCLK/VoSPI); resync\r\n");
+                LEP_PrintVoSPIDiag("diag");
+                Lepton_VoSPI_Resync();
             }
         }
     }
-    test_count++;
 
-    /* Lepton: grab one frame every ~16 loops (~8s); fails fast if no data */
-    if ((test_count % 16U) == 0U)
+    /* ---- slice 1..N: background time wheel (runs in BOTH modes) ----
+       Unlike the README_10 attempt, the VIDEO PATH IS NOT IN THE WHEEL -
+       it runs unconditionally above; the wheel only paces the cheap,
+       resource-exclusive background tasks. */
     {
-        if (Lepton_Capture_Frame())
+        static App_WheelTask_t wheel[] = {
+            { 0U,    0U, App_Task_Fire  },   /* self-gated 200ms inside */
+            { 500U,  0U, App_Task_Oled  },   /* gas readout line        */
+            { 2000U, 0U, App_Task_Sht40 },   /* temp/humi + OLED rows   */
+            { 1000U, 0U, App_Task_SdCd  },   /* SD hot-plug edge        */
+        };
+        uint32_t now = HAL_GetTick();
+        for (uint32_t ti = 0; ti < (sizeof(wheel) / sizeof(wheel[0])); ti++)
         {
-            char lp[48];
-            uint16_t craw = lepton_raw_frame[60][80];   /* centre pixel */
-            float    ctmp = Lepton_Raw_To_Temp(craw);
-            sprintf(lp, "[LEP] OK c_raw=%u c=%.2fC\r\n", (unsigned)craw, ctmp);
-            SD_UART_Print(lp);
-            LEP_PrintVoSPIDiag("okdiag");
-        }
-        else
-        {
-            SD_UART_Print("[LEP] no frame (check MCLK/VoSPI); resync\r\n");
-            LEP_PrintVoSPIDiag("diag");
-            Lepton_VoSPI_Resync();
+            if ((now - wheel[ti].last) >= wheel[ti].period_ms)
+            {
+                wheel[ti].last = now;
+                wheel[ti].fn();
+            }
         }
     }
-
-    sht40_status = sht40_read_data(&temperature, &humidity);
-
-    if (sht40_status == 0)
-    {
-        sprintf(disp_buff, "%.2f C   ", temperature);
-        OLED_ShowString(48, 16, (uint8_t *)disp_buff, 16, 1);
-
-        sprintf(disp_buff, "%.2f %%   ", humidity);
-        OLED_ShowString(48, 32, (uint8_t *)disp_buff, 16, 1);
-
-        /* Buzzer stays silent (paused on request). New HW is active-HIGH:
-           to sound, WritePin(BEEP..., GPIO_PIN_SET); to silence, GPIO_PIN_RESET. */
-        if (temperature >= 30.0f)        /* over-temp: would sound (PG9 HIGH) */
-        {
-            (void)0; /* BEEP paused */
-        }
-        else if (temperature < 29.5f)    /* back below threshold: would silence (PG9 LOW) */
-        {
-            (void)0; /* BEEP paused */
-        }
-    }
-
 
   }
   /* USER CODE END 3 */
@@ -501,6 +505,70 @@ void PeriphCommonClock_Config(void)
 static void SD_UART_Print(const char *s)
 {
     HAL_UART_Transmit(&huart1, (uint8_t *)s, (uint16_t)strlen(s), 100);
+}
+
+/* ---- background time-wheel tasks (README_14): each touches ONLY its own
+   peripheral (ADC1/2, SW_I2C OLED, SHT40 I2C, PG10 GPIO) - zero overlap with
+   the video path, zero USART1 prints in the periodic path (Step9A rule). ---- */
+
+static void App_Task_Fire(void)
+{
+    FireGuard_Poll();               /* self-gated to FIRE_GUARD_PERIOD_MS */
+}
+
+static void App_Task_Oled(void)
+{
+    switch (FireGuard_State())
+    {
+    case FIRE_STATE_WARMUP:
+    {
+        uint32_t now = HAL_GetTick();
+        uint32_t left = (now < FIRE_WARMUP_MS) ? ((FIRE_WARMUP_MS - now) / 1000UL) : 0UL;
+        sprintf(disp_buff, "MQ PREHEAT %2lus     ", (unsigned long)left);
+        break;
+    }
+    case FIRE_STATE_CALIB:
+        sprintf(disp_buff, "MQ CAL(clean air)  ");
+        break;
+    default:
+        sprintf(disp_buff, "G%4uppm A%4u %s",
+                (unsigned)FireGuard_MQ2_PPM(),
+                (unsigned)FireGuard_MQ135_PPM(),
+                FireGuard_Alarm() ? "FIRE" : "    ");
+        break;
+    }
+    OLED_ShowString(0, 0, (uint8_t *)disp_buff, 12, 1);
+}
+
+static void App_Task_Sht40(void)
+{
+    sht40_status = sht40_read_data(&temperature, &humidity);
+    if (sht40_status == 0)
+    {
+        sprintf(disp_buff, "%.2f C   ", temperature);
+        OLED_ShowString(48, 16, (uint8_t *)disp_buff, 16, 1);
+        sprintf(disp_buff, "%.2f %%   ", humidity);
+        OLED_ShowString(48, 32, (uint8_t *)disp_buff, 16, 1);
+    }
+}
+
+static void App_Task_SdCd(void)
+{
+    uint8_t present_now = (SD_IsPresent() == SD_OK) ? 1 : 0;
+    if (present_now != sd_present_last)
+    {
+        sd_present_last = present_now;
+        if (present_now)
+        {
+            sd_init_status = SD_Card_Init();
+            SD_ReportStatus();
+        }
+        else
+        {
+            sd_init_status = SD_NOT_PRESENT;
+            OLED_ShowString(32, 48, (uint8_t *)"No Card ", 16, 1);
+        }
+    }
 }
 
 /* Show SD status on OLED + UART (capacity in MB when OK). */
