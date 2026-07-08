@@ -169,6 +169,34 @@ main.c    诊断行新增 stale=N
 4. 运动场景：Qt FPS 不应再掉到 0.x；`frame_torn` 占比应大降。
 5. 失败回退：`git checkout 84a944a -- .`（Step1 DMA 版）。
 
+### 5.5 B94FCF90 仍 no frame——真根因：seg=0 哑段被当失败处理
+
+上板 B94FCF90 仍 no frame。用 pyserial 直抓 USART1 完整诊断行
+（`uart_noframe_B94FCF90.log`）：
+
+```text
+reason=1(guard) reads=3000 valid=2667 discard=333 pkt0=52 desync=11
+badseg=38 stale=0 mask=0x0F seen=5/6/3/0 segs=1/2/0/0 bad0=38
+```
+
+判读推翻 §5.2 的"discard 误判"主因假设（那只是次要因素）：
+
+1. **`bad0=38/52`（73%）= Lepton 3.5 正常哑段**——传感器内部 26Hz、导出限
+   8.7Hz，每 3 个帧槽 2 个以 seg=0 输出，规范要求主机静默读完丢弃；
+2. 旧代码把哑段当 `bad_seg` 失败：`HAL_Delay(1)`+重猎 pkt0，打断包级同步，
+   紧随哑段之后的**真段**大量 desync（14 真段仅 ~3 完成，`desync=10`），
+   seg4 每 capture 至多完成 1 次 → fresh 门禁永无机会通过；
+3. `stale` 防饿死计数每次 capture 被 DiagReset 清零，阈值 4 永不可达 →
+   防饿死失效，退化路径也断了。
+
+**修复（commit 646e257, HEX MD5 4B1A95822967468A1F91C678030E488F, 0E/0W）**：
+①seg=0 仅计 bad0，继续读完 60 包，不 fail 不延时；②防饿死改用跨 capture
+静态 `vospi_stale_streak`，任何发布（fresh 或强制）清零。
+
+上板判读：`segs=` 四路完成计数应大幅上升（真段成功率 ~25%→接近 100%）、
+`desync` 应降到个位、出图恢复且 fresh 命中（`stale` 低位徘徊）。
+失败回退 `git checkout 84a944a -- .`。
+
 ## 6. 防复发红线（继承 README_11 §5，长期有效）
 
 1. 栈红线：>128B 日志缓冲禁止放栈上；评估栈时按"主线程最深 + 最深中断链"计算（现 8KB 有余量）。
