@@ -59,6 +59,11 @@ static uint8_t vospi_cached_mask = 0U;  /* bit0..3: segments already committed t
 static uint8_t vospi_seg_gen[LEPTON_SEG_CNT + 1U] = {0};
 static uint8_t vospi_gen = 0U;
 static uint8_t vospi_last_commit_seg = 0U;
+/* Starvation guard for the fresh-publish gate: counts consecutive stale
+   blocks ACROSS captures (lepton_diag.vospi_stale_block is diag-reset every
+   capture, and seg-4 completes at most ~once per capture, so a per-capture
+   counter can never reach the force-publish threshold). */
+static uint16_t vospi_stale_streak = 0U;
 
 /* bring-up diagnostics (printed by main) */
 Lepton_Diag_t lepton_diag = {0};
@@ -1119,13 +1124,22 @@ uint8_t Lepton_Capture_Frame(void)
                     if (lepton_diag.vospi_seg_seen[seg] < 0xFFFFU)
                         lepton_diag.vospi_seg_seen[seg]++;
                 }
-                if (seg < 1 || seg > LEPTON_SEG_CNT)
+                if (seg == 0U)
+                {
+                    /* Segment id 0 = non-exported dummy frame (Lepton 3.5
+                       runs 26Hz internally but exports 8.7Hz: 2 of every 3
+                       frame slots stream with seg=0). Per spec the host
+                       reads the remaining packets silently and drops the
+                       segment — bailing out here with a delay breaks
+                       packet-level sync and kills the NEXT (real) segment. */
+                    lepton_diag.vospi_bad_seg++;
+                    lepton_diag.vospi_seg_bad0++;
+                    /* keep reading packets 21..59; seg stays 0 -> no commit */
+                }
+                else if (seg > LEPTON_SEG_CNT)
                 {
                     lepton_diag.vospi_bad_seg++;
-                    if (seg == 0U)
-                        lepton_diag.vospi_seg_bad0++;
-                    else
-                        lepton_diag.vospi_seg_badx++;
+                    lepton_diag.vospi_seg_badx++;
                     lepton_diag.vospi_last_expected = p;
                     lepton_diag.vospi_fail_reason = LEPTON_VOSPI_FAIL_BAD_SEG;
                     HAL_Delay(LEPTON_VOSPI_RETRY_WAIT_MS);
@@ -1173,15 +1187,16 @@ uint8_t Lepton_Capture_Frame(void)
                     fresh_ok = 0U;
                     if (lepton_diag.vospi_stale_block < 0xFFFFU)
                         lepton_diag.vospi_stale_block++;
-                    /* Starvation guard: if this capture keeps failing the
-                       same-generation test, fall back to the stitched shelf
-                       rather than returning "no frame" forever. */
-                    if (lepton_diag.vospi_stale_block >= LEPTON_VOSPI_STALE_FORCE_PUBLISH)
+                    /* Starvation guard: if the same-generation test keeps
+                       failing across captures, fall back to the stitched
+                       shelf rather than returning "no frame" forever. */
+                    if (++vospi_stale_streak >= LEPTON_VOSPI_STALE_FORCE_PUBLISH)
                         fresh_ok = 1U;
                 }
 #endif
                 if (fresh_ok)
                 {
+                    vospi_stale_streak = 0U;
                     memcpy(lepton_raw_frame, lepton_assembly_frame, sizeof(lepton_raw_frame));
                     lepton_diag.vospi_got_mask = 0x0FU;
                     lepton_diag.vospi_fail_reason = LEPTON_VOSPI_FAIL_NONE;
