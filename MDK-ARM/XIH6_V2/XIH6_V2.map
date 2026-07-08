@@ -2140,9 +2140,10 @@ Section Cross References
     lepton.o(.text.Lepton_Capture_Frame) refers to delay.o(.text.delay_us) for delay_us
     lepton.o(.text.Lepton_Capture_Frame) refers to stm32h7xx_hal_spi.o(.text.HAL_SPI_Receive) for HAL_SPI_Receive
     lepton.o(.text.Lepton_Capture_Frame) refers to lepton.o(.bss.seg_payload) for seg_payload
-    lepton.o(.text.Lepton_Capture_Frame) refers to rt_memcpy_w.o(.text) for __aeabi_memcpy4
+    lepton.o(.text.Lepton_Capture_Frame) refers to rt_memcpy_v6.o(.text) for __aeabi_memcpy
     lepton.o(.text.Lepton_Capture_Frame) refers to lepton.o(.bss.lepton_assembly_frame) for lepton_assembly_frame
     lepton.o(.text.Lepton_Capture_Frame) refers to lepton.o(.bss.lepton_raw_frame) for lepton_raw_frame
+    lepton.o(.text.Lepton_Capture_Frame) refers to rt_memcpy_w.o(.text) for __aeabi_memcpy4
     lepton.o(.ARM.exidx.text.Lepton_Capture_Frame) refers to lepton.o(.text.Lepton_Capture_Frame) for [Anonymous Symbol]
     lepton.o(.ARM.exidx.text.Lepton_Raw_To_Temp) refers to lepton.o(.text.Lepton_Raw_To_Temp) for [Anonymous Symbol]
     lepton.o(.text.bb_write_byte) refers to lepton.o(.bss..L_MergedGlobals) for .L_MergedGlobals
@@ -4968,7 +4969,7 @@ Image Symbol Table
     HardFault_Handler                        0x08008d81   Thumb Code   148  stm32h7xx_it.o(.text.HardFault_Handler)
     LED_TURN                                 0x08009179   Thumb Code    50  led.o(.text.LED_TURN)
     Lepton_CCI_SetAttr                       0x08009739   Thumb Code   738  lepton.o(.text.Lepton_CCI_SetAttr)
-    Lepton_Capture_Frame                     0x08009a21   Thumb Code  1372  lepton.o(.text.Lepton_Capture_Frame)
+    Lepton_Capture_Frame                     0x08009a21   Thumb Code  1376  lepton.o(.text.Lepton_Capture_Frame)
     Lepton_I2C_BitBang_Probe                 0x08009f81   Thumb Code   454  lepton.o(.text.Lepton_I2C_BitBang_Probe)
     Lepton_Init                              0x0800a149   Thumb Code  1362  lepton.o(.text.Lepton_Init)
     Lepton_Raw_To_Temp                       0x0800a6a1   Thumb Code    24  lepton.o(.text.Lepton_Raw_To_Temp)
@@ -5428,8 +5429,7 @@ Memory Map of the image
     0x080095f0   0x080095f0   0x00000148   Code   RO         1936    .text.Lepton_BB_Write_Mem  lepton.o
     0x08009738   0x08009738   0x000002e2   Code   RO         1944    .text.Lepton_CCI_SetAttr  lepton.o
     0x08009a1a   0x08009a1a   0x00000006   PAD
-    0x08009a20   0x08009a20   0x0000055c   Code   RO         1972    .text.Lepton_Capture_Frame  lepton.o
-    0x08009f7c   0x08009f7c   0x00000004   PAD
+    0x08009a20   0x08009a20   0x00000560   Code   RO         1972    .text.Lepton_Capture_Frame  lepton.o
     0x08009f80   0x08009f80   0x000001c6   Code   RO         1962    .text.Lepton_I2C_BitBang_Probe  lepton.o
     0x0800a146   0x0800a146   0x00000002   PAD
     0x0800a148   0x0800a148   0x00000552   Code   RO         1966    .text.Lepton_Init   lepton.o
@@ -5720,7 +5720,7 @@ Image component sizes
        596          0          0          0          0       3326   gpio.o
        312          0          0          0         84       8163   i2c.o
         50          0          0          0          0       1599   led.o
-      6138          8          0          0      86709      32652   lepton.o
+      6142          8          0          0      86709      32786   lepton.o
       1304          0        121          1      77028      15042   lepton_stream.o
        752          0          0          0        168       8035   ltdc.o
       3436        232       2229         19       1104      18909   main.o
@@ -5754,9 +5754,9 @@ Image component sizes
        804          0          0          0        564      12498   usart.o
 
     ----------------------------------------------------------------------
-     68988        948       9228         40     176704     591559   Object Totals
+     68988        948       9228         40     176704     591693   Object Totals
          0          0         32          0          0          0   (incl. Generated)
-       706         16          2          3         63          0   (incl. Padding)
+       702         16          2          3         63          0   (incl. Padding)
 
     ----------------------------------------------------------------------
 
@@ -5844,8 +5844,8 @@ Image component sizes
 
       Code (inc. data)   RO Data    RW Data    ZI Data      Debug   
 
-     75006       1168       9462         40     176800     592735   Grand Totals
-     75006       1168       9462         40     176800     592735   ELF Image Totals
+     75006       1168       9462         40     176800     592869   Grand Totals
+     75006       1168       9462         40     176800     592869   ELF Image Totals
      75006       1168       9462         40          0          0   ROM Totals
 
 ==============================================================================

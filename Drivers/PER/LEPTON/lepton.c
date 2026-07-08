@@ -29,6 +29,17 @@ static void Lepton_I2C_BusRecover(void);
  * frame (2 fps -> ~0.3 fps on motion). 0 = legacy publish-on-seg4 behavior. */
 #define LEPTON_VOSPI_FRESH_PUBLISH         1U
 
+/* Mid-segment discard packets usually mean we out-ran the Lepton's packet
+ * generator (~440us/packet at 8.7fps), NOT lost sync: re-read the same
+ * expected packet up to this many times (1ms apart) before declaring a real
+ * desync. Raises the per-segment success rate the fresh gate depends on. */
+#define LEPTON_VOSPI_INTRA_DISCARD_MAX     8U
+
+/* Fresh-gate starvation guard: after this many same-generation rejections in
+ * ONE capture call, publish the stitched shelf anyway (legacy behavior). A
+ * time-skewed frame beats no frame; the Qt tear gate still filters it. */
+#define LEPTON_VOSPI_STALE_FORCE_PUBLISH   4U
+
 /* global image buffer + scratch packet */
 uint16_t lepton_raw_frame[LEPTON_IMG_HEIGHT][LEPTON_IMG_WIDTH] = {0};
 uint8_t  lepton_spi_pkt[LEPTON_PACK_SIZE] = {0};
@@ -1046,20 +1057,31 @@ uint8_t Lepton_Capture_Frame(void)
             if (p != 0)   /* packet 0 already in lepton_spi_pkt */
             {
                 uint8_t pkt_class;
+                uint8_t intra_retry = 0;
 
-                if (++pkt_guard > LEPTON_VOSPI_PACKET_GUARD)
+                for (;;)
                 {
-                    lepton_diag.vospi_fail_reason = LEPTON_VOSPI_FAIL_GUARD;
-                    return 0;
+                    if (++pkt_guard > LEPTON_VOSPI_PACKET_GUARD)
+                    {
+                        lepton_diag.vospi_fail_reason = LEPTON_VOSPI_FAIL_GUARD;
+                        return 0;
+                    }
+                    if (Lepton_SPI_Read_Packet(lepton_spi_pkt) != HAL_OK)
+                    {
+                        lepton_diag.vospi_spi_err++;
+                        lepton_diag.vospi_fail_reason = LEPTON_VOSPI_FAIL_SPI;
+                        return 0;
+                    }
+                    pkt_class = Lepton_VoSPI_DiagPacket();
+                    if (pkt_class != VOSPI_PKT_DISCARD)
+                        break;
+                    /* discard mid-segment: data not ready yet, wait and
+                       re-read; only give up after the retry budget. */
+                    if (++intra_retry > LEPTON_VOSPI_INTRA_DISCARD_MAX)
+                        break;
+                    HAL_Delay(LEPTON_VOSPI_RETRY_WAIT_MS);
                 }
-                if (Lepton_SPI_Read_Packet(lepton_spi_pkt) != HAL_OK)
-                {
-                    lepton_diag.vospi_spi_err++;
-                    lepton_diag.vospi_fail_reason = LEPTON_VOSPI_FAIL_SPI;
-                    return 0;
-                }
-                pkt_class = Lepton_VoSPI_DiagPacket();
-                if (pkt_class == VOSPI_PKT_DISCARD)
+                if (pkt_class == VOSPI_PKT_DISCARD)   /* retry budget exhausted */
                 {
                     lepton_diag.vospi_desync++;
                     lepton_diag.vospi_last_expected = p;
@@ -1151,6 +1173,11 @@ uint8_t Lepton_Capture_Frame(void)
                     fresh_ok = 0U;
                     if (lepton_diag.vospi_stale_block < 0xFFFFU)
                         lepton_diag.vospi_stale_block++;
+                    /* Starvation guard: if this capture keeps failing the
+                       same-generation test, fall back to the stitched shelf
+                       rather than returning "no frame" forever. */
+                    if (lepton_diag.vospi_stale_block >= LEPTON_VOSPI_STALE_FORCE_PUBLISH)
+                        fresh_ok = 1U;
                 }
 #endif
                 if (fresh_ok)
