@@ -197,6 +197,23 @@ badseg=38 stale=0 mask=0x0F seen=5/6/3/0 segs=1/2/0/0 bad0=38
 `desync` 应降到个位、出图恢复且 fresh 命中（`stale` 低位徘徊）。
 失败回退 `git checkout 84a944a -- .`。
 
+### 5.6 4B1A9582 时不时 no frame——判决：整体回退 2FPS 金标准（commit 3084e4f, HEX MD5 C87FBCC8）
+
+哑段修复版实测（`uart_4B1A9582.log`）：`seen=2/3/4/3` 四路均衡（哑段跳过生效），
+但 `desync=25~27`、失败点 `exp=46`（段中部）且收包号跳变——**段内 discard 重试环
+的 HAL_Delay(1)×N 累积延时超过 Lepton 段窗口，传感器跳段**，比 2FPS 版（对段内
+discard 立即放弃重猎）反而更差。
+
+与 `XIH6_V3_2FPS` 快照 diff 定责：
+- `lepton_stream.c/h` 逐字节一致、`main.c` 仅 `stale=` 打印差异 →
+  **上位机与传输协议无任何改动，no frame 全部源于 lepton.c 采集路径的 Step2 改动**；
+- Qt 侧只有显示层撕裂门禁（b3f4c47），不可能造成 STM32 采集层 no frame。
+
+fresh 门禁两轮修补（f1380bf、646e257）均引入新问题，按单变量红线**整体回退**：
+lepton.c 直接取自 2FPS 快照（0E/0W，Code=74870），运动割裂交 Qt 撕裂门禁处理。
+教训入红线：**采集时序问题禁止理论修补，必须先抓完整诊断行定责再动手**；fresh
+发布语义若再评估，改动方向应是"无延时跳过哑段"而非"段内加延时重试"。
+
 ## 6. 防复发红线（继承 README_11 §5，长期有效）
 
 1. 栈红线：>128B 日志缓冲禁止放栈上；评估栈时按"主线程最深 + 最深中断链"计算（现 8KB 有余量）。
