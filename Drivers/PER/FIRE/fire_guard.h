@@ -8,8 +8,11 @@
  * PPM per the industry-standard MQ model, alarm on dedicated driver circuits.
  *
  * Wiring:
- *   MQ-2   AO -> PA1_C = ADC1_INP1   MQ-135 AO -> PA0_C = ADC2_INP0
- *   Alarm LED    : PJ15 (LED_CONTROL) -> AO3400 NMOS, HIGH = on
+ *   MQ-2   AO -> PA1_C = ADC12_INP1   MQ-135 AO -> PA0_C = ADC12_INP0
+ *   Both sampled on ADC1 (channel re-config per conversion, ~µs): the _C
+ *   pads feed ADC1 and ADC2 alike, and field test showed ADC1 reads fine
+ *   while ADC2 returned a constant 0 - so ADC2 is bypassed entirely.
+ *   RGB lamp     : PJ15 (LED_CONTROL) -> AO3400 NMOS, HIGH = on
  *   Alarm buzzer : PG9  (BEEP_GPIO)   -> NPN low-side, HIGH = sound
  *                  (hook present, intentionally NOT driven yet)
  *   !! MQ modules run their divider from 5V: AO can exceed 3.3V. The H743
@@ -53,11 +56,12 @@
 #define FIRE_MQ135_PPM_A       116.602069f
 #define FIRE_MQ135_PPM_B       -2.769f
 
-/* Alarm thresholds in PPM with hysteresis (field-calibrate later):
-   MQ-2: LPG/smoke concern band starts a few hundred ppm.
-   MQ-135: CO2-eq fresh air ~400ppm; >2000 = badly polluted / smoke. */
-#define FIRE_MQ2_ON_PPM        300.0f
-#define FIRE_MQ2_OFF_PPM       200.0f
+/* Alarm thresholds in PPM with hysteresis. User spec 2026-07-09: the RGB
+   lamp (PJ15, AO3400 NMOS - "RGB灯" from here on) lights when MQ-2 exceeds
+   4 ppm (clean-air LPG baseline computes to ~3.6 ppm, so 4 ppm = very
+   sensitive, trips on any real gas above ambient). */
+#define FIRE_MQ2_ON_PPM        4.0f
+#define FIRE_MQ2_OFF_PPM       3.0f
 #define FIRE_MQ135_ON_PPM      2000.0f
 #define FIRE_MQ135_OFF_PPM     1500.0f
 
