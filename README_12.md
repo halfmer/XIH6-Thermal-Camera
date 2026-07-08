@@ -126,7 +126,50 @@ tests/thermalwidget_selftest.cpp
 - `serial_diag.log` 的 `frame_torn` 行数 = 被拦截的拼接帧数量；若 `torn_total` 占比很高（>50%），说明 STM32 侧 shelf 拼接严重，届时再评估固件侧 fresh-generation 发布语义（接线修复后 badseg 应已大降，成功率可能足够支撑 fresh 语义）。
 - 若某静止场景被持续误拦（理论上不应发生，有防冻结兜底），可临时 `setTearGateEnabled(false)` 对比。
 
-## 5. 防复发红线（继承 README_11 §5，长期有效）
+## 5. 优化 Step2：fresh-generation 发布门禁（运动掉帧修复）与 no frame 回归修复
+
+### 5.1 Step2 初版（commit 70eddf8, HEX MD5 0E080167）——上板失败：一直 no frame
+
+针对"运动时 2FPS→0.3FPS"根因（persistent shelf 跨时间拼接帧被 Qt 撕裂门禁拦截），
+固件侧加 fresh-generation 门禁：段号回卷/Resync 时 `vospi_gen++`，commit 记
+`vospi_seg_gen[seg]`，发布要求 4 段同代。**上板实测：一直 no frame。**
+
+### 5.2 根因定位
+
+`Lepton_Capture_Frame` 的 60 包循环把**段内 discard 包判为 desync，整段作废**。
+但段内 discard 是主机读快于包生成（~440µs/包 @SPI 7.5MHz）的**正常流控现象**，
+不是失步。旧 shelf 语义下段作废只损失一段、shelf 慢慢攒满仍可发布；fresh 门禁
+要求**连续 4 段同代成功**，段成功率 p 一打折 p⁴ 直接崩塌 → 3000 包 guard 耗尽 →
+长期 no frame。**同一机制正是当年 fresh_mask 失败（README_8 §1）的真因**——
+不是 fresh 语义本身错，是段内 discard 误判拖低了段成功率。
+
+### 5.3 修复（commit f1380bf, HEX MD5 B94FCF90A6D94ED8487741D54D68F87F）
+
+```text
+lepton.c  60包循环: discard 包不再判 desync, HAL_Delay(1) 重读同包,
+          上限 LEPTON_VOSPI_INTRA_DISCARD_MAX=8 次, 超限才按原 desync 处理
+lepton.c  发布块防饿死: 单次 capture 内 stale 拦截达
+          LEPTON_VOSPI_STALE_FORCE_PUBLISH=4 次即放行拼接帧
+          (退化为旧 shelf 行为, 最坏不劣于 Step1 基线, 不可能比 no frame 差)
+lepton.h  Lepton_Diag_t 新增 uint16_t vospi_stale_block
+main.c    诊断行新增 stale=N
+构建: 0E/0W, Code=75006, log=build_step2b_noframe_fix.log
+```
+
+### 5.4 上板验证清单（本版）
+
+1. 烧录 `B94FCF90A6D94ED8487741D54D68F87F`；USART1=115200，UART4=1.5M。
+2. `[LEP] OK` 应恢复出图（最坏退化为旧拼接行为）。
+3. 诊断行判读：
+   - `stale=` 持续为 0 且出图 → fresh 门禁全命中，运动割裂应消失；
+   - `stale=` 偶发 1~3 → fresh 大部分命中，可接受；
+   - `stale=` 持续 ≥4（防饿死频繁触发）→ 段成功率仍低，下一步调
+     INTRA_DISCARD_MAX 或改 µs 级重试节奏；
+   - `desync=` 应比 0E080167 版明显下降。
+4. 运动场景：Qt FPS 不应再掉到 0.x；`frame_torn` 占比应大降。
+5. 失败回退：`git checkout 84a944a -- .`（Step1 DMA 版）。
+
+## 6. 防复发红线（继承 README_11 §5，长期有效）
 
 1. 栈红线：>128B 日志缓冲禁止放栈上；评估栈时按"主线程最深 + 最深中断链"计算（现 8KB 有余量）。
 2. 时序红线：UART4 DMA 启动后的热路径禁止任何阻塞打印。
