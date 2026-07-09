@@ -355,7 +355,12 @@ int main(void)
     if (Lepton_Stream_Active())
     {
         if (Lepton_Capture_Frame())
+        {
             Lepton_Stream_SendFrame();
+            /* scan AFTER arming the TX DMA: the ~100µs hot-spot sweep runs
+               in parallel with the transfer, video latency unchanged */
+            FireGuard_ThermalScan();
+        }
         else
             Lepton_VoSPI_Resync();
         LED_TURN(1);              /* 2ms heartbeat vs ~256ms per frame */
@@ -373,6 +378,7 @@ int main(void)
                 char lp[48];
                 uint16_t craw = lepton_raw_frame[60][80];   /* centre pixel */
                 float    ctmp = Lepton_Raw_To_Temp(craw);
+                FireGuard_ThermalScan();   /* idle mode: 8s cadence, still guarded */
                 sprintf(lp, "[LEP] OK c_raw=%u c=%.2fC\r\n", (unsigned)craw, ctmp);
                 SD_UART_Print(lp);
                 LEP_PrintVoSPIDiag("okdiag");
@@ -536,7 +542,7 @@ static void App_Task_Oled(void)
         sprintf(disp_buff, "G%4uppm A%4u %s",
                 (unsigned)FireGuard_MQ2_PPM(),
                 (unsigned)FireGuard_MQ135_PPM(),
-                FireGuard_Alarm() ? "FIRE" : "    ");
+                (FireGuard_Alarm() || FireGuard_ThermalAlarm()) ? "FIRE" : "    ");
         break;
     }
     OLED_ShowString(0, 0, (uint8_t *)disp_buff, 12, 1);

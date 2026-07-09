@@ -1,6 +1,7 @@
 #include "fire_guard.h"
 #include "adc.h"
 #include "usart.h"
+#include "lepton.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +14,11 @@ static uint8_t  cal_count = 0;
 static uint8_t  alarm_on = 0, first_pass = 1;
 static uint32_t last_tick = 0;
 static FireGuard_State_t state = FIRE_STATE_WARMUP;
+/* thermal over-heat channel: written by FireGuard_ThermalScan (video slice),
+   read by FireGuard_Poll (time wheel) - same super-loop, no concurrency. */
+static uint8_t  thermal_alarm = 0;
+static uint16_t thermal_max_raw = 0;
+static uint8_t  blink_phase = 0;
 
 /* One polled conversion (~40µs incl. 810.5-cycle sampling), no IRQ/DMA.
    ADC1 -> MQ-2 (PA1_C / INP1), ADC2 -> MQ-135 (PA0_C / INP0): each sensor
@@ -114,6 +120,38 @@ void FireGuard_Init(void)
     state = FIRE_STATE_WARMUP;
 }
 
+/* Scan the freshly assembled LEPTON frame for a >=100 C hot spot. Called
+   from the video slice right after Lepton_Capture_Frame() succeeds, so
+   lepton_raw_frame is a complete coherent frame (never mid-assembly).
+   ~19200 compares = ~100 µs worst case at 480 MHz, and it runs while the
+   TX DMA is already streaming the same frame - the video path never waits.
+   Latch on FIRE_THERMAL_MIN_PIX hot pixels (dead-pixel immunity), release
+   only when the valid-pixel maximum cools below the OFF level. */
+void FireGuard_ThermalScan(void)
+{
+    const uint16_t *px = &lepton_raw_frame[0][0];
+    uint16_t maxv = 0;
+    uint32_t hot = 0;
+    uint32_t i;
+
+    for (i = 0; i < (uint32_t)LEPTON_IMG_WIDTH * LEPTON_IMG_HEIGHT; i++)
+    {
+        uint16_t v = px[i];
+        if (v == 0xFFFFU)                /* dead/stuck pixel sentinel */
+            continue;
+        if (v > maxv)
+            maxv = v;
+        if (v >= FIRE_THERMAL_ON_RAW)
+            hot++;
+    }
+
+    thermal_max_raw = maxv;
+    if (hot >= FIRE_THERMAL_MIN_PIX)
+        thermal_alarm = 1U;
+    else if (maxv < FIRE_THERMAL_OFF_RAW)
+        thermal_alarm = 0U;
+}
+
 void FireGuard_Poll(void)
 {
     uint16_t mq2_raw, mq135_raw;
@@ -182,12 +220,27 @@ void FireGuard_Poll(void)
     }
     }
 
-    HAL_GPIO_WritePin(LED_CONTROL_GPIO_Port, LED_CONTROL_Pin,
-                      alarm_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
-
-    /* Buzzer hook (PG9 HIGH = sound), enable as a later single-step change:
-       HAL_GPIO_WritePin(BEEP_GPIO_GPIO_Port, BEEP_GPIO_Pin,
-                         alarm_on ? GPIO_PIN_SET : GPIO_PIN_RESET); */
+    /* Output stage, priority order (user spec 2026-07-09):
+       1) thermal >=100 C  : lamp and buzzer toggle together each 200 ms poll
+                             (2.5 Hz blink + intermittent beep) - runs in ANY
+                             MQ state, the thermal channel needs no warm-up;
+       2) gas alarm only   : lamp steady on, buzzer silent (unchanged);
+       3) no alarm         : both off. */
+    if (thermal_alarm != 0U)
+    {
+        blink_phase ^= 1U;
+        HAL_GPIO_WritePin(LED_CONTROL_GPIO_Port, LED_CONTROL_Pin,
+                          blink_phase ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BEEP_GPIO_GPIO_Port, BEEP_GPIO_Pin,
+                          blink_phase ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    }
+    else
+    {
+        blink_phase = 0U;
+        HAL_GPIO_WritePin(LED_CONTROL_GPIO_Port, LED_CONTROL_Pin,
+                          alarm_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BEEP_GPIO_GPIO_Port, BEEP_GPIO_Pin, GPIO_PIN_RESET);
+    }
 }
 
 FireGuard_State_t FireGuard_State(void)  { return state;      }
@@ -196,3 +249,5 @@ uint16_t FireGuard_MQ135_Raw(void)       { return mq135_filt; }
 uint16_t FireGuard_MQ2_PPM(void)         { return mq2_ppm;    }
 uint16_t FireGuard_MQ135_PPM(void)       { return mq135_ppm;  }
 uint8_t  FireGuard_Alarm(void)           { return alarm_on;   }
+uint8_t  FireGuard_ThermalAlarm(void)    { return thermal_alarm;   }
+uint16_t FireGuard_ThermalMaxRaw(void)   { return thermal_max_raw; }

@@ -148,3 +148,49 @@ Core/Src/main.c                   时间轮任务表 + OLED 状态/ppm 显示
 - [GitHub: MQ-135 CO2 Calibration notes](https://github.com/Bobbo117/MQ135-Air-Quality-Sensor)
 - [TeachMeMicro: MQ-135 tutorial](https://www.teachmemicro.com/mq-135-air-quality-sensor-tutorial/)
 
+## 9. 第三轮：LEPTON 过温报警——热点 ≥100°C 灯闪+蜂鸣（2026-07-09）
+
+需求：热像画面里检测到 **100°C 以上就直接驱动 RGB 灯闪烁和蜂鸣器响**。
+
+### 9.1 设计
+
+温度来源是 LEPTON TLinear raw（0.01 K/LSB，README_2）：`raw = (T°C+273.15)×100`，
+故 **ON=37315 (100.00°C)，OFF=36815 (95.00°C，5°C 迟滞)**。与 Qt 端
+`raw*0.01-273.15` 同一约定，无需 CCI（TLinear 为出厂默认，CCI 硬件仍搁置）。
+
+```text
+采集侧  main.c: Lepton_Capture_Frame()==1 后调 FireGuard_ThermalScan()
+        - 流模式: SendFrame() 之后扫描, ~100µs 与 TX DMA 并行, 视频零延迟
+        - 空闲模式: 8s 健康检查成功后扫描(此模式下报警刷新最慢 8s)
+判决    fire_guard.c: 全帧 19200 像素一遍
+        - 跳过 0xFFFF(死像素哨兵, README_9~12 时期已确认此传感器有坏点)
+        - ≥4 个像素(FIRE_THERMAL_MIN_PIX) raw≥ON → 锁存报警
+          (孤立坏点永远触发不了; 真实 100°C 热源在 160×120 视场必占多像素)
+        - 有效像素最大值 < OFF → 解除; 无数据超时——火警保持响直到画面变凉(fail-loud)
+输出    FireGuard_Poll(200ms 节拍) 优先级:
+        1) 过温: PJ15 与 PG9 同拍翻转 → 2.5Hz 闪烁 + 断续鸣叫(蜂鸣器首次启用)
+        2) 仅气体: PJ15 常亮, 蜂鸣器静音(维持原行为)
+        3) 无报警: 全灭
+        过温通道不受 MQ WARMUP/CALIB 抑制——热像无需预热。
+OLED    RUN 态首行 FIRE 字样改为 气体||过温; WARMUP/CALIB 态首行仍显示预热/标定
+        文案(此时过温若触发, 灯闪+蜂鸣已足够示警, 属已知可接受)
+```
+
+### 9.2 改动文件
+
+```text
+Drivers/PER/FIRE/fire_guard.c/.h  过温通道: ThermalScan + 输出级优先仲裁 + PG9 启用
+Core/Src/main.c                   两处 Capture 成功点挂 ThermalScan + OLED FIRE 联动
+```
+
+不动：lepton.c/lepton_stream.c、协议、Qt、ESP32、Android——四端兼容性天然保持。
+
+### 9.3 上板验证清单
+
+1. 打火机火焰/烙铁对准镜头：Qt 图上热点出现的同时 PJ15 闪烁(2.5Hz)、蜂鸣器
+   断续响、OLED 出现 FIRE；
+2. 移开热源、画面冷却后灯灭声止（95°C 迟滞解除）；
+3. 常温下长时间运行无误报（验证死像素免疫：坏点若恰读 >37315 但 <4 个不触发）；
+4. 气体报警回归：MQ-2 打气仍是常亮不响，与过温行为可区分；
+5. 视频 FPS/checksum_bad 与 160CD0F1 基线持平（扫描不拖视频）。
+

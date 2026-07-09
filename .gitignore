@@ -1,27 +1,60 @@
-# ==== Keil MDK 构建中间产物（保留 hex/map/sct 作为每个 commit 的固件快照）====
+# ==== AI / 外部工具（非工程源码）====
+.auto-embedded/
+AI_API_CONNECT/
+.claude/
+.agents/
+.embeddedskills/
+.agent_browser_edge_profile/
+.edge_cdp_profile/
+.agent_*
+
+# ==== Keil MDK 构建中间产物（保留 hex/map/sct 作为固件快照）====
 MDK-ARM/XIH6_V2/*
 !MDK-ARM/XIH6_V2/XIH6_V2.hex
 !MDK-ARM/XIH6_V2/XIH6_V2.map
 !MDK-ARM/XIH6_V2/XIH6_V2.sct
 MDK-ARM/*.uvguix.*
+MDK-ARM/build_*.log
+MDK-ARM/JLinkLog.txt
+MDK-ARM/*.ini
 
-# ==== 未编译的 FreeRTOS 库（uvprojx 未包含任何其源文件，README/memory 已确认为死重量）====
+# ==== 未编译的 FreeRTOS 库（uvprojx 未包含任何其源文件）====
 MDK-ARM/FreeRTOS/
 MDK-ARM/FreeRTOSv202406.05-LTS/
 
-# ==== Qt 上位机构建/部署产物（可由源码 + windeployqt 重建）====
+# ==== Qt 上位机构建/部署产物 ====
 ESP_UART_Host/ESP_UART_Windows/build*/
 ESP_UART_Host/ESP_UART_Windows/deploy/
-ESP_UART_Host/ESP_UART/build/
+ESP_UART_Host/ESP_UART/build*/
+ESP_UART_Host/ESP_UART/build-codex/
+ESP_UART_Host/ESP_UART_Windows/build-codex/
+ESP_UART_Host/ESP_UART/aqtinstall.log
 CMakeLists.txt.user
 *.pro.user
 
-# ==== 工具/浏览器临时目录 ====
-.agent_browser_edge_profile/
-.edge_cdp_profile/
-.agents/
-.embeddedskills/
+# ==== Android 构建产物 ====
+Android_studio_project/.gradle/
+Android_studio_project/.idea/
+Android_studio_project/.kotlin/
+Android_studio_project/app/build/
+Android_studio_project/local.properties
+*.apk
+!热成像视频接收软件.apk
 
-# ==== 运行期日志/临时文件 ====
+# ==== Python / 脚本 ====
+__pycache__/
+*.pyc
+*.pyo
+
+# ==== 工具 / 探测脚本（非项目代码）====
+tools/api_reconnect_probe.ps1
+ESP_UART_Host/*.bat
+
+# ==== 运行期日志 / 临时文件 ====
 serial_diag.log
 *.tmp
+*.log
+
+# ==== 源目录拷贝 / 临时目录（已迁移到正确位置）====
+手机软件/
+tools/

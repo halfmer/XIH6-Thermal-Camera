@@ -64,6 +64,28 @@
 #define FIRE_MQ135_ON_PPM      2000.0f
 #define FIRE_MQ135_OFF_PPM     1500.0f
 
+/* ----------------------------------------------------------------------------
+ * Thermal over-heat channel (user spec 2026-07-09): any hot spot >= 100 C in
+ * the LEPTON frame -> RGB lamp BLINKS + buzzer BEEPS (both toggled together
+ * at the FIRE_GUARD_PERIOD_MS cadence = 2.5 Hz), overriding the gas alarm
+ * (gas alone keeps the lamp STEADY and the buzzer silent).
+ *
+ * Raw is TLinear centikelvin (0.01 K/LSB, README_2 §"TLinear"):
+ *   raw = (T_C + 273.15) * 100  ->  100 C = 37315, 95 C release = 36815.
+ * The sensor has known dead pixels that can read 0/0xFFFF (README_9..12 era):
+ * 0xFFFF is skipped outright and the alarm additionally needs at least
+ * FIRE_THERMAL_MIN_PIX pixels at/above the ON level - an isolated stuck
+ * pixel can never trip it, while any real >=100 C source covers several
+ * pixels of the 160x120 field. Latch releases only when the frame maximum
+ * (dead pixels excluded) drops below the OFF level; no timeout - a fire
+ * alarm stays loud until the scene itself reads cool (fail-loud).
+ * This channel is independent of the MQ warm-up/calibration state machine:
+ * the thermal camera needs no heater stabilisation.
+ * ------------------------------------------------------------------------- */
+#define FIRE_THERMAL_ON_RAW    37315U   /* (100.00 C + 273.15) * 100 */
+#define FIRE_THERMAL_OFF_RAW   36815U   /* 95.00 C release (5 C hysteresis) */
+#define FIRE_THERMAL_MIN_PIX   4U       /* pixels >= ON needed to latch */
+
 typedef enum {
     FIRE_STATE_WARMUP = 0,   /* heater stabilising, alarm suppressed */
     FIRE_STATE_CALIB  = 1,   /* sampling clean air for R0            */
@@ -72,11 +94,14 @@ typedef enum {
 
 void              FireGuard_Init(void);
 void              FireGuard_Poll(void);      /* time-wheel task */
+void              FireGuard_ThermalScan(void); /* call after each complete LEPTON frame */
 FireGuard_State_t FireGuard_State(void);
 uint16_t          FireGuard_MQ2_Raw(void);   /* filtered 16-bit raw */
 uint16_t          FireGuard_MQ135_Raw(void);
 uint16_t          FireGuard_MQ2_PPM(void);   /* 0 until FIRE_STATE_RUN */
 uint16_t          FireGuard_MQ135_PPM(void);
 uint8_t           FireGuard_Alarm(void);
+uint8_t           FireGuard_ThermalAlarm(void);  /* 1 = hot spot >= 100 C latched */
+uint16_t          FireGuard_ThermalMaxRaw(void); /* frame max, dead px excluded */
 
 #endif /* __FIRE_GUARD_H */

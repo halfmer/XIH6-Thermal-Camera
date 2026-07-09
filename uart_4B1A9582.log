@@ -1,8 +1,0 @@
-[LEP] no frame (check MCLK/VoSPI); resync
-[LEP] VoSPI diag reason=1 reads=3000 valid=2717 discard=283 invalid=0 pkt0=36 desync=25 badseg=24 spierr=0 stale=0 mask=0x0F seen=2/3/4/3 segs=0/3/0/0 dup=3 bad0=24 badx=0 wait=25 exp=46 last=10 06 79 2B seg=0x00
-[LEP] no frame (check MCLK/VoSPI); resync
-[LEP] VoSPI diag reason=1 reads=3000 valid=2675 discard=325 invalid=0 pkt0=36 desync=27 badseg=24 spierr=0 stale=0 mask=0x0F seen=3/4/3/2 segs=1/1/1/0 dup=3 bad0=24 badx=0 wait=27 exp=46 last=00 02 75 08 seg=0x00
-[LEP] no frame (check MCLK/VoSPI); resync
-[LEP] VoSPI diag reason=1 reads=3000 valid=2720 discard=280 invalid=0 pkt0=38 desync=26 badseg=24 spierr=0 stale=0 mask=0x0F seen=2/3/5/4 segs=0/3/1/0 dup=4 bad0=24 badx=0 wait=27 exp=44 last=0F FF FF FF seg=0x03
-[LEP] no frame (check MCLK/VoSPI); resync
-[LEP] VoSPI diag reason=1 reads=3000 valid=2716 discard=284 invalid=0 pkt0=37 desync=25 badseg=25 spierr=0 stale=1 mask=0x0F seen=3/2/3/3 segs=1/1/0/1 dup=3 bad0=25 badx=0 wait=26 exp=47 last=60 0F 35 11 seg=0x00
