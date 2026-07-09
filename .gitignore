@@ -7,6 +7,8 @@ AI_API_CONNECT/
 .agent_browser_edge_profile/
 .edge_cdp_profile/
 .agent_*
+AGENTS.md
+CLAUDE.md
 
 # ==== Keil MDK 构建中间产物（保留 hex/map/sct 作为固件快照）====
 MDK-ARM/XIH6_V2/*
