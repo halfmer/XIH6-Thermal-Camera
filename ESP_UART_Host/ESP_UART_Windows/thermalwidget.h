@@ -73,6 +73,17 @@ private:
     int m_dataWidth  = 0;
     int m_dataHeight = 0;
 
+    // Segment cache (README_14 sec.10): a torn frame's 4 segments are each
+    // internally valid (STM32 commits whole 30-row segments); only the
+    // segment BOUNDARIES tear. So instead of discarding a torn frame, copy
+    // each of its segments into the cache and re-assemble for display.
+    // The displayed image is always the freshest segment combination -
+    // motion stays fluid (no freeze), seams fade within a few frames.
+    static constexpr int kSegCount = 4;
+    static constexpr int kSegRows  = 30;   // 120 / 4
+    QVector<quint16> m_segCache;          // width*kSegRows per segment, x4
+    bool m_segCacheValid = false;
+
     double m_avgTemp = 0.0;
 
     // FPS tracking

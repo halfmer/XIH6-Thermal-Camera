@@ -21,14 +21,28 @@ QImage ColorMap::apply(const quint16 *raw, int width, int height,
     if (width <= 0 || height <= 0)
         return image;
 
-    // Find min / max / avg
+    // Robust auto-range via percentiles (README_14 sec.10): a torn frame
+    // stitched from segments of different capture rounds can contain
+    // outlier pixels (stale/bad rows). Plain min/max stretches the range
+    // so far that normal 26C pixels map to pink. Use p2/p98 percentiles
+    // instead — outliers get clamped to the LUT ends, the scene's real
+    // dynamic range fills the colour table.
     const int count = width * height;
-    quint16 vmin = raw[0], vmax = raw[0];
-    double sum = raw[0];
-    for (int i = 1; i < count; ++i) {
-        if (raw[i] < vmin) vmin = raw[i];
-        if (raw[i] > vmax) vmax = raw[i];
+    QVector<quint16> sorted;
+    sorted.reserve(count);
+    double sum = 0.0;
+    for (int i = 0; i < count; ++i) {
+        sorted.append(raw[i]);
         sum += raw[i];
+    }
+    std::sort(sorted.begin(), sorted.end());
+
+    quint16 vmin = sorted.first();
+    quint16 vmax = sorted.last();
+    if (count >= 100) {
+        vmin = sorted[count * 2 / 100];       // p2
+        vmax = sorted[count * 98 / 100];      // p98
+        if (vmax <= vmin) { vmax = sorted.last(); vmin = sorted.first(); }
     }
     if (outMin) *outMin = vmin;
     if (outMax) *outMax = vmax;

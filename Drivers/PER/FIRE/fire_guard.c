@@ -14,9 +14,11 @@ static uint8_t  alarm_on = 0, first_pass = 1;
 static uint32_t last_tick = 0;
 static FireGuard_State_t state = FIRE_STATE_WARMUP;
 
-/* Select an ADC1 regular channel (INP0=PA0_C / INP1=PA1_C, both wired to
-   ADC1) with the long sampling the kΩ-level MQ divider needs. */
-static HAL_StatusTypeDef FireGuard_SelectChannel(uint32_t channel)
+/* One polled conversion (~40µs incl. 810.5-cycle sampling), no IRQ/DMA.
+   ADC1 -> MQ-2 (PA1_C / INP1), ADC2 -> MQ-135 (PA0_C / INP0): each sensor
+   on its native ADC instance, both re-configured at runtime to the long
+   sampling time the kΩ-level MQ divider needs (CubeMX leaves 1.5 cycles). */
+static HAL_StatusTypeDef FireGuard_ConfigChannel(ADC_HandleTypeDef *hadc, uint32_t channel)
 {
     ADC_ChannelConfTypeDef sConfig = {0};
 
@@ -27,25 +29,21 @@ static HAL_StatusTypeDef FireGuard_SelectChannel(uint32_t channel)
     sConfig.OffsetNumber           = ADC_OFFSET_NONE;
     sConfig.Offset                 = 0;
     sConfig.OffsetSignedSaturation = DISABLE;
-    return HAL_ADC_ConfigChannel(&hadc1, &sConfig);
+    return HAL_ADC_ConfigChannel(hadc, &sConfig);
 }
 
-/* One polled conversion on ADC1 for the given channel (~20µs incl. the
-   810.5-cycle sampling), no IRQ/DMA. Optional status out for diagnostics. */
-static uint16_t FireGuard_ReadChannel(uint32_t channel, HAL_StatusTypeDef *st_out)
+static uint16_t FireGuard_ReadAdc(ADC_HandleTypeDef *hadc, HAL_StatusTypeDef *st_out)
 {
     uint16_t v = 0;
     HAL_StatusTypeDef st;
 
-    st = FireGuard_SelectChannel(channel);
-    if (st == HAL_OK)
-        st = HAL_ADC_Start(&hadc1);
+    st = HAL_ADC_Start(hadc);
     if (st == HAL_OK)
     {
-        st = HAL_ADC_PollForConversion(&hadc1, 2);
+        st = HAL_ADC_PollForConversion(hadc, 2);
         if (st == HAL_OK)
-            v = (uint16_t)HAL_ADC_GetValue(&hadc1);
-        (void)HAL_ADC_Stop(&hadc1);
+            v = (uint16_t)HAL_ADC_GetValue(hadc);
+        (void)HAL_ADC_Stop(hadc);
     }
     if (st_out != NULL)
         *st_out = st;
@@ -78,28 +76,36 @@ static uint16_t FireGuard_RsToPpm(float rs, float r0, float a, float b)
 
 void FireGuard_Init(void)
 {
+    HAL_StatusTypeDef st1, st2;
+
     /* Alarm outputs off (pins already push-pull outputs from MX_GPIO_Init). */
     HAL_GPIO_WritePin(LED_CONTROL_GPIO_Port, LED_CONTROL_Pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(BEEP_GPIO_GPIO_Port,  BEEP_GPIO_Pin,   GPIO_PIN_RESET);
 
-    /* One-time linear calibration for ADC1, boot path only. ADC2 is not
-       used any more (field test: ADC2 conversions returned constant 0,
-       ADC1 on the same _C pads reads fine). */
+    /* Re-config both ADCs to long sampling (regen-proof). ADC1 -> MQ-2
+       (PA1_C/INP1), ADC2 -> MQ-135 (PA0_C/INP0) - each on its native
+       instance so the SYSCFG analog switch + GPIO setup from each ADC's
+       own MspInit applies. */
+    (void)FireGuard_ConfigChannel(&hadc1, ADC_CHANNEL_1);
+    (void)FireGuard_ConfigChannel(&hadc2, ADC_CHANNEL_0);
+
+    /* One-time linear calibration for both ADCs, boot path only. */
     (void)HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET_LINEARITY,
+                                      ADC_SINGLE_ENDED);
+    (void)HAL_ADCEx_Calibration_Start(&hadc2, ADC_CALIB_OFFSET_LINEARITY,
                                       ADC_SINGLE_ENDED);
 
     /* Boot-path self-test (USART1 print allowed here, no DMA in flight yet):
-       one conversion per channel with HAL status - next log splits
-       "config problem" from "wiring problem" definitively. */
+       one conversion per ADC with HAL status - next log splits "config
+       problem" from "wiring problem" definitively. */
     {
-        char sb[112];
-        HAL_StatusTypeDef st1 = HAL_ERROR, st0 = HAL_ERROR;
-        uint16_t v1 = FireGuard_ReadChannel(ADC_CHANNEL_1, &st1); /* PA1_C MQ-2   */
-        uint16_t v0 = FireGuard_ReadChannel(ADC_CHANNEL_0, &st0); /* PA0_C MQ-135 */
-        sprintf(sb, "[FIRE] adc1 selftest: MQ2(INP1) raw=%u st=%d | MQ135(INP0) raw=%u st=%d\r\n",
-                (unsigned)v1, (int)st1, (unsigned)v0, (int)st0);
+        char sb[128];
+        uint16_t v1 = FireGuard_ReadAdc(&hadc1, &st1);   /* MQ-2   */
+        uint16_t v0 = FireGuard_ReadAdc(&hadc2, &st2);   /* MQ-135 */
+        sprintf(sb, "[FIRE] selftest: MQ2(ADC1) raw=%u st=%d | MQ135(ADC2) raw=%u st=%d\r\n",
+                (unsigned)v1, (int)st1, (unsigned)v0, (int)st2);
         (void)HAL_UART_Transmit(&huart1, (uint8_t *)sb, (uint16_t)strlen(sb), 30);
-        if ((st0 == HAL_OK) && (v0 < 100U))
+        if ((st2 == HAL_OK) && (v0 < 100U))
             (void)HAL_UART_Transmit(&huart1,
                 (uint8_t *)"[FIRE] MQ135 conversion OK but pin ~0V -> check AO wiring / module 5V supply\r\n",
                 79, 30);
@@ -117,8 +123,8 @@ void FireGuard_Poll(void)
         return;
     last_tick = now;
 
-    mq2_raw   = FireGuard_ReadChannel(ADC_CHANNEL_1, NULL);   /* PA1_C */
-    mq135_raw = FireGuard_ReadChannel(ADC_CHANNEL_0, NULL);   /* PA0_C */
+    mq2_raw   = FireGuard_ReadAdc(&hadc1, NULL);   /* PA1_C, MQ-2   */
+    mq135_raw = FireGuard_ReadAdc(&hadc2, NULL);   /* PA0_C, MQ-135 */
 
     if (first_pass)
     {

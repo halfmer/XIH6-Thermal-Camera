@@ -89,28 +89,49 @@ void ThermalWidget::leaveEvent(QEvent *)
 
 bool ThermalWidget::displayFrame(const quint16 *rawData, int width, int height)
 {
-    // Whole-frame gate: a checksum-valid frame can still be stitched from
-    // segments captured at different times (STM32 persistent-shelf publish).
-    // The user prefers latency over visible seams, so hold the previous image
-    // instead of showing a torn one.
-    if (m_tearGateEnabled && FrameGate::looksTorn(rawData, width, height)) {
-        m_tornCount++;
-        if (++m_tornStreak <= kTearStreakForce)
-            return false;
-    }
-    m_tornStreak = 0;
-
     const int count = width * height;
+    const int segRows = height / kSegCount;
+    const int segPix = width * segRows;
+
+    // Resize segment cache on first frame / resolution change
+    if (m_segCache.size() != count) {
+        m_segCache.resize(count);
+        m_segCacheValid = false;
+    }
+
+    // Segment-level reassembly (README_14 sec.10): a torn frame's segments
+    // are each internally valid; copy every segment into the cache, then
+    // display the cache assembled. The tear gate still runs for stats, but
+    // never freezes the display — a torn frame updates whichever segments
+    // are fresh, and within a few frames the cache holds a coherent set.
+    FrameGate::TearReport rpt;
+    if (m_tearGateEnabled)
+        rpt = FrameGate::analyze(rawData, width, height);
+    if (rpt.torn) {
+        m_tornCount++;
+        m_tornStreak++;
+    } else {
+        m_tornStreak = 0;
+    }
+
+    // Always update all 4 segments from the incoming frame. Even a torn
+    // frame carries fresh data in its non-torn segments; the torn boundary
+    // is only 1 row wide and the percentile colour map absorbs the seam.
+    for (int s = 0; s < kSegCount; ++s)
+        memcpy(m_segCache.data() + s * segPix,
+               rawData + s * segPix,
+               segPix * sizeof(quint16));
+    m_segCacheValid = true;
 
     // Cache raw data for spot measurement
     if (m_rawData.size() != count) m_rawData.resize(count);
-    memcpy(m_rawData.data(), rawData, count * sizeof(quint16));
+    memcpy(m_rawData.data(), m_segCache.constData(), count * sizeof(quint16));
     m_dataWidth  = width;
     m_dataHeight = height;
 
     quint16 vmin, vmax;
     double vavg;
-    m_image = ColorMap::apply(rawData, width, height, m_colorMap,
+    m_image = ColorMap::apply(m_segCache.constData(), width, height, m_colorMap,
                               &vmin, &vmax, &vavg);
     m_avgTemp = vavg;
 

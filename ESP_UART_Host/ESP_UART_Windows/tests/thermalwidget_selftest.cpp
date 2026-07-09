@@ -49,7 +49,9 @@ int main()
                                          &vmin, &vmax, &vavg);
     if (image.isNull() || image.width() != kWidth || image.height() != kHeight)
         return 4;
-    if (vmin != host.first() || vmax != host.last() || vavg <= vmin || vavg >= vmax)
+    // Percentile auto-range (README_14 sec.10): vmin/vmax are p2/p98, not
+    // absolute min/max, so they sit INSIDE [first, last] for a gradient.
+    if (vmin < host.first() || vmax > host.last() || vmax <= vmin)
         return 5;
 
     QSet<QRgb> colors;

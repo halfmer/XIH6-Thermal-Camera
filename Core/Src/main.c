@@ -389,12 +389,14 @@ int main(void)
     /* ---- slice 1..N: background time wheel (runs in BOTH modes) ----
        Unlike the README_10 attempt, the VIDEO PATH IS NOT IN THE WHEEL -
        it runs unconditionally above; the wheel only paces the cheap,
-       resource-exclusive background tasks. */
+       resource-exclusive background tasks. SHT40 is self-gated (called
+       every loop, not from the wheel) because its 10ms conversion wait
+       must be spread across iterations, not blocked in one wheel slot. */
+    App_Task_Sht40();
     {
         static App_WheelTask_t wheel[] = {
             { 0U,    0U, App_Task_Fire  },   /* self-gated 200ms inside */
             { 500U,  0U, App_Task_Oled  },   /* gas readout line        */
-            { 2000U, 0U, App_Task_Sht40 },   /* temp/humi + OLED rows   */
             { 1000U, 0U, App_Task_SdCd  },   /* SD hot-plug edge        */
         };
         uint32_t now = HAL_GetTick();
@@ -542,13 +544,32 @@ static void App_Task_Oled(void)
 
 static void App_Task_Sht40(void)
 {
-    sht40_status = sht40_read_data(&temperature, &humidity);
-    if (sht40_status == 0)
+    /* Self-gated (not wheel-paced): sht40_request/poll split the 10ms
+       conversion wait across loop iterations so VoSPI is never delayed.
+       2s cadence between measurements. */
+    static uint32_t next_start = 0;
+    uint32_t now = HAL_GetTick();
+
+    uint8_t st = sht40_poll(&temperature, &humidity);
+    if (st == 0xFF) return;             /* still converting */
+    if (st == 0)
     {
         sprintf(disp_buff, "%.2f C   ", temperature);
         OLED_ShowString(48, 16, (uint8_t *)disp_buff, 16, 1);
         sprintf(disp_buff, "%.2f %%   ", humidity);
         OLED_ShowString(48, 32, (uint8_t *)disp_buff, 16, 1);
+        next_start = now + 2000U;
+    }
+    else if (st == 0xFE)
+    {
+        /* idle: start a new measurement on cadence */
+        if (now >= next_start)
+            (void)sht40_request(&temperature, &humidity);
+    }
+    else
+    {
+        sht40_status = st;
+        next_start = now + 2000U;        /* retry after cooldown */
     }
 }
 
@@ -641,6 +662,7 @@ void MPU_Config(void)
   MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;
   MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE;
 
+  
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);

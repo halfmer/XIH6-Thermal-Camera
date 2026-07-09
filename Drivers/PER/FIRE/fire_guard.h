@@ -8,10 +8,9 @@
  * PPM per the industry-standard MQ model, alarm on dedicated driver circuits.
  *
  * Wiring:
- *   MQ-2   AO -> PA1_C = ADC12_INP1   MQ-135 AO -> PA0_C = ADC12_INP0
- *   Both sampled on ADC1 (channel re-config per conversion, ~µs): the _C
- *   pads feed ADC1 and ADC2 alike, and field test showed ADC1 reads fine
- *   while ADC2 returned a constant 0 - so ADC2 is bypassed entirely.
+ *   MQ-2   AO -> PA1_C = ADC1_INP1   MQ-135 AO -> PA0_C = ADC2_INP0
+ *   Each on its native ADC instance (SYSCFG analog switch + GPIO set up by
+ *   that ADC's own MspInit), both re-configured to 810.5-cycle sampling.
  *   RGB lamp     : PJ15 (LED_CONTROL) -> AO3400 NMOS, HIGH = on
  *   Alarm buzzer : PG9  (BEEP_GPIO)   -> NPN low-side, HIGH = sound
  *                  (hook present, intentionally NOT driven yet)
