@@ -31,7 +31,8 @@ static uint16_t lepton_assembly_frame[LEPTON_IMG_HEIGHT][LEPTON_IMG_WIDTH] = {0}
 
 /* one segment's payload (60 packets * 160 bytes), staged before commit */
 static uint8_t seg_payload[LEPTON_PKT_PER_SEG][160];
-static uint8_t vospi_cached_mask = 0U;  /* bit0..3: segments already committed to the assembly frame */
+static uint8_t vospi_cached_mask = 0U;  /* bit0..3: segments ever committed (persistent, diagnostic) */
+static uint8_t frame_seg_mask    = 0U;  /* bit0..3: segments of the frame CURRENTLY being assembled */
 
 /* bring-up diagnostics (printed by main) */
 Lepton_Diag_t lepton_diag = {0};
@@ -887,10 +888,15 @@ void Lepton_Init(SPI_HandleTypeDef *hspi, I2C_HandleTypeDef *hi2c)
        hang here so the rest of the super-loop keeps running. */
     if (Lepton_WaitBoot(2000) == LEP_OK)
     {
-        Lepton_Status_t st = Lepton_EnableTLinear(1);
+        Lepton_Status_t st;
+        /* AGC is ON by factory default; it re-maps the scene dynamic range so
+           raw16 is NOT absolute centikelvin even with TLinear enabled — a flame
+           reads near ambient ("only a few degrees"). Disable it explicitly so
+           raw16 = temperature*100 (flame reads genuinely hot). */
+        (void)Lepton_SetAGC(0);
+        st = Lepton_EnableTLinear(1);
         lepton_diag.tlinear_err = (st == LEP_OK) ? 0 : (int8_t)st;
-        /* TLinear implies radiometric; AGC stays off by default. FFC will run
-           automatically on the first frames, so no explicit RunFFC here. */
+        /* FFC runs automatically on the first frames; no explicit RunFFC. */
     }
 
     LEPTON_CS_HIGH();
@@ -948,6 +954,58 @@ static void Lepton_VoSPI_CommitSegment(uint8_t seg)
 }
 
 /* ---------------------------------------------------------------------------
+ * Dead-pixel interpolation (README_14 §11): replace 0 / 0xFFFF pixels (VoSPI
+ * dropouts, bad pixels, saturated flame pixels that decode as all-ones) with
+ * the average of their valid 4-neighbours. This is the ONLY image-processing
+ * step on STM32 — it removes salt-and-pepper noise so temperature contours
+ * read clearer on the host, WITHOUT altering any valid pixel's radiometric
+ * value (absolute temperature is preserved for the host spot readout).
+ * Runs on lepton_assembly_frame after all 4 segments are in, BEFORE the memcpy
+ * to lepton_raw_frame (the streamer's source), so it never races the TX DMA.
+ * Cost: one O(W*H) pass, ~19k pixels, well under 1ms on H7@480MHz.
+ * ------------------------------------------------------------------------- */
+static void Lepton_Assembly_DeadPixelFix(void)
+{
+    int x, y;
+
+    for (y = 0; y < LEPTON_IMG_HEIGHT; y++)
+    {
+        for (x = 0; x < LEPTON_IMG_WIDTH; x++)
+        {
+            uint16_t v = lepton_assembly_frame[y][x];
+            if ((v != 0U) && (v != 0xFFFFU))
+                continue;
+
+            uint32_t acc = 0U;
+            uint32_t cnt = 0U;
+
+            if (y > 0)
+            {
+                uint16_t n = lepton_assembly_frame[y - 1][x];
+                if ((n != 0U) && (n != 0xFFFFU)) { acc += n; cnt++; }
+            }
+            if (y < (LEPTON_IMG_HEIGHT - 1))
+            {
+                uint16_t n = lepton_assembly_frame[y + 1][x];
+                if ((n != 0U) && (n != 0xFFFFU)) { acc += n; cnt++; }
+            }
+            if (x > 0)
+            {
+                uint16_t n = lepton_assembly_frame[y][x - 1];
+                if ((n != 0U) && (n != 0xFFFFU)) { acc += n; cnt++; }
+            }
+            if (x < (LEPTON_IMG_WIDTH - 1))
+            {
+                uint16_t n = lepton_assembly_frame[y][x + 1];
+                if ((n != 0U) && (n != 0xFFFFU)) { acc += n; cnt++; }
+            }
+            if (cnt > 0U)
+                lepton_assembly_frame[y][x] = (uint16_t)(acc / cnt);
+        }
+    }
+}
+
+/* ---------------------------------------------------------------------------
  * Capture one full Lepton 3.5 frame (segmented VoSPI) into
  * lepton_raw_frame[120][160].
  * @retval 1 = segment cache is complete and segment 4 just arrived.
@@ -961,6 +1019,9 @@ uint8_t Lepton_Capture_Frame(void)
     uint32_t pkt_guard = 0;
 
     Lepton_VoSPI_DiagReset();
+    /* Each capture call assembles one fresh frame: clear any partial set left
+       by a previous failed/timed-out capture so segments never cross frames. */
+    frame_seg_mask = 0U;
 
     while (pkt_guard < LEPTON_VOSPI_PACKET_GUARD)
     {
@@ -1089,7 +1150,7 @@ uint8_t Lepton_Capture_Frame(void)
         }
         if (fail) continue;   /* lost sync mid-segment -> retry from packet 0 */
 
-        /* ---- commit a complete segment into the persistent frame buffer ---- */
+        /* ---- commit a complete segment into the assembly frame ---- */
         if (seg >= 1 && seg <= LEPTON_SEG_CNT)
         {
             if (lepton_diag.vospi_seg_ok[seg] < 0xFFFFU)
@@ -1101,15 +1162,31 @@ uint8_t Lepton_Capture_Frame(void)
                     lepton_diag.vospi_dup_seg++;
             }
 
-            Lepton_VoSPI_CommitSegment(seg);
-
-            /* Match the best observed board behavior: collect valid segments
-               1..4 on a persistent shelf and publish when segment 4 arrives.
-               Do not clear the shelf after publish; later segments refresh it. */
-            if ((seg == LEPTON_SEG_CNT) &&
-                ((vospi_cached_mask & 0x0FU) == 0x0FU))
+            /* Same-frame assembly (README_14 §10): detect the frame boundary
+               by segment-1 arrival. If a partial frame was in progress, the
+               missing segments are from a DIFFERENT capture round — publishing
+               them stitched would produce a horizontal tear at a segment
+               boundary (the 160x80 upper/lower split seen on hardware). Discard
+               the partial set and start fresh. Trades FPS for frame coherence
+               per project Principle 1 (Frame Integrity > Frame Rate). */
+            if ((seg == 1U) && (frame_seg_mask != 0U))
             {
+                if (lepton_diag.vospi_stale_block < 0xFFFFU)
+                    lepton_diag.vospi_stale_block++;
+                frame_seg_mask = 0U;
+            }
+
+            Lepton_VoSPI_CommitSegment(seg);
+            frame_seg_mask |= (uint8_t)(1U << (seg - 1U));
+
+            /* Publish ONLY when all 4 segments of the SAME frame are in the
+               assembly buffer. Dead-pixel cleanup runs first (README_14 §11),
+               then the result is copied to lepton_raw_frame (stream source). */
+            if (frame_seg_mask == 0x0FU)
+            {
+                Lepton_Assembly_DeadPixelFix();
                 memcpy(lepton_raw_frame, lepton_assembly_frame, sizeof(lepton_raw_frame));
+                frame_seg_mask = 0U;
                 lepton_diag.vospi_got_mask = 0x0FU;
                 lepton_diag.vospi_fail_reason = LEPTON_VOSPI_FAIL_NONE;
                 return 1;
