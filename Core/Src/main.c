@@ -524,26 +524,19 @@ static void App_Task_Oled(void)
     {
     case FIRE_STATE_WARMUP:
     {
-        /* Show raw ADC during warmup (README_14 §12): g=ADC1/PA1(MQ-2),
-           a=ADC2/PA0(MQ-135). A stuck at 0 -> AO wiring / module 5V supply;
-           the heater-warm falling curve on g is normal and must not alarm. */
         uint32_t now = HAL_GetTick();
         uint32_t left = (now < FIRE_WARMUP_MS) ? ((FIRE_WARMUP_MS - now) / 1000UL) : 0UL;
-        sprintf(disp_buff, "PRE%2lus g%5u a%5u", (unsigned long)left,
-                (unsigned)FireGuard_MQ2_Raw(), (unsigned)FireGuard_MQ135_Raw());
+        sprintf(disp_buff, "MQ PREHEAT %2lus     ", (unsigned long)left);
         break;
     }
     case FIRE_STATE_CALIB:
-        sprintf(disp_buff, "CAL g%5u a%5u   ",
-                (unsigned)FireGuard_MQ2_Raw(), (unsigned)FireGuard_MQ135_Raw());
+        sprintf(disp_buff, "MQ CAL(clean air)  ");
         break;
     default:
-        /* Raw + ppm for both sensors: raw diagnoses A=0 (wiring) and
-           G-not-responding-to-gas (heater/airflow); ppm is the alarm metric.
-           The RGB lamp (PJ15) is the visual alarm; buzzer hook is dormant. */
-        sprintf(disp_buff, "g%5u %3up a%5u %3up",
-                (unsigned)FireGuard_MQ2_Raw(), (unsigned)FireGuard_MQ2_PPM(),
-                (unsigned)FireGuard_MQ135_Raw(), (unsigned)FireGuard_MQ135_PPM());
+        sprintf(disp_buff, "G%4uppm A%4u %s",
+                (unsigned)FireGuard_MQ2_PPM(),
+                (unsigned)FireGuard_MQ135_PPM(),
+                FireGuard_Alarm() ? "FIRE" : "    ");
         break;
     }
     OLED_ShowString(0, 0, (uint8_t *)disp_buff, 12, 1);

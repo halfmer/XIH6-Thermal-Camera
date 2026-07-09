@@ -138,7 +138,7 @@ typedef struct {
     uint16_t vospi_seg_bad0;   /* packet-20 segment id decoded as 0 */
     uint16_t vospi_seg_badx;   /* packet-20 segment id decoded as >4 */
     uint16_t vospi_sync_waits; /* long waits after first discard while seeking packet 0 */
-    uint16_t vospi_stale_block;/* same-frame assembly drops: segment-1 arrived mid-frame (lost segments -> frame discarded, not stitched) */
+    uint16_t vospi_stale_block;/* publishes blocked: 4 slots cached but not same generation */
 } Lepton_Diag_t;
 
 extern Lepton_Diag_t lepton_diag;

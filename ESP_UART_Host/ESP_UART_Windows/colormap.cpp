@@ -21,41 +21,28 @@ QImage ColorMap::apply(const quint16 *raw, int width, int height,
     if (width <= 0 || height <= 0)
         return image;
 
-    // Robust auto-range (README_14 §10-11): filter out VoSPI dropout (0) and
-    // saturated/error (0xFFFF) pixels first — these are not real temperatures
-    // and their presence was what stretched plain min/max to 0..65535 and
-    // turned normal 26C scenes pink. Then take p2/p98 of the remaining valid
-    // pixels for a stable display range. A flame pixel (0xFFFF, excluded from
-    // the valid set) still maps to the LUT top via the qBound clamp in the
-    // render loop below, so the flame reads as max-colour, not "a few degrees".
-    // (STM32 dead-pixel fix already replaces most 0/0xFFFF before transmission;
-    // this filter is the host-side safety net for any that slip through.)
+    // Robust auto-range via percentiles (README_14 sec.10): a torn frame
+    // stitched from segments of different capture rounds can contain
+    // outlier pixels (stale/bad rows). Plain min/max stretches the range
+    // so far that normal 26C pixels map to pink. Use p2/p98 percentiles
+    // instead — outliers get clamped to the LUT ends, the scene's real
+    // dynamic range fills the colour table.
     const int count = width * height;
-    QVector<quint16> valid;
-    valid.reserve(count);
+    QVector<quint16> sorted;
+    sorted.reserve(count);
     double sum = 0.0;
-    int validCount = 0;
     for (int i = 0; i < count; ++i) {
-        const quint16 v = raw[i];
-        sum += v;
-        if ((v != 0U) && (v != 0xFFFFU)) {
-            valid.append(v);
-            validCount++;
-        }
+        sorted.append(raw[i]);
+        sum += raw[i];
     }
-    if (validCount < 10) {                 // fallback: scene is all-dropout
-        valid.clear();
-        for (int i = 0; i < count; ++i) valid.append(raw[i]);
-        validCount = count;
-    }
-    std::sort(valid.begin(), valid.end());
+    std::sort(sorted.begin(), sorted.end());
 
-    quint16 vmin = valid.first();
-    quint16 vmax = valid.last();
-    if (validCount >= 100) {
-        vmin = valid[validCount * 2 / 100];       // p2 of valid
-        vmax = valid[validCount * 98 / 100];      // p98 of valid
-        if (vmax <= vmin) { vmax = valid.last(); vmin = valid.first(); }
+    quint16 vmin = sorted.first();
+    quint16 vmax = sorted.last();
+    if (count >= 100) {
+        vmin = sorted[count * 2 / 100];       // p2
+        vmax = sorted[count * 98 / 100];      // p98
+        if (vmax <= vmin) { vmax = sorted.last(); vmin = sorted.first(); }
     }
     if (outMin) *outMin = vmin;
     if (outMax) *outMax = vmax;
