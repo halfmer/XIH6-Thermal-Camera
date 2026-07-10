@@ -7,9 +7,11 @@
 [![Mobile](https://img.shields.io/badge/Android-Kotlin-7F52FF?logo=kotlin)](https://developer.android.com/)
 [![License](https://img.shields.io/badge/License-MIT-blue)](#license)
 
+## **在这里着重感谢帮我设计外壳和供电板的外援，虽然没怎么用上，但是很好看😋**
+
 一套从零自制的红外热成像监控系统：**FLIR Lepton 3.5 → STM32H743 → { USB 串口 | ESP32-S3 WiFi } → Qt 桌面端 / Android 手机端**，附带温湿度、烟雾、空气质量传感与火灾声光告警。
 
-两周时间、一个人、从画板到出图。2026 年全国大学生嵌入式芯片与系统设计竞赛参赛作品——最终因时间不足未能完成全部验证，遗憾离场，但链路上每一帧都是真实的。
+两周时间、一个人(**代码和核心功能PCB设计**)、从画板到出图。2026 年全国大学生嵌入式芯片与系统设计竞赛参赛作品——最终因时间不足未能完成全部验证，遗憾离场，但链路上每一帧都是真实的。
 
 系统的核心信条只有一条：
 
