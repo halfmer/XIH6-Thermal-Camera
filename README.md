@@ -147,7 +147,7 @@ VoSPI 包解析 → segment 校验/去重 → 装配暂存区（staging）
 
 | 模块 | 型号 / 规格 | 与主控的接口 |
 |---|---|---|
-| 主控 | STM32H743XIH6（Cortex-M7 @480 MHz，无外部晶振，HSI 起 PLL） | — |
+| 主控 | STM32H743XIH6（Cortex-M7 @480 MHz，有外部晶振） | — |
 | 热像仪 | FLIR Lepton 3.5（160×120，辐射测温） | SPI4（VoSPI）+ I2C4（CCI）+ PWM MCLK |
 | WiFi 桥 | ESP32-S3 | SPI5（STM32 为从机）+ 2 根握手线 |
 | USB 串口 | CH340C | UART4 @ 1.5 Mbps（实测 2 Mbps 会丢字节，详见日志 6） |
